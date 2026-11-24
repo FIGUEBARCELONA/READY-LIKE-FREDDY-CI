@@ -1,0 +1,48 @@
+name: National demographic reference capture
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/national-population-reference.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download primary national references
+        run: |
+          python3 - <<'PY'
+          import urllib.request, urllib.parse, pathlib, hashlib, zipfile, json, datetime
+          out=pathlib.Path('references');out.mkdir()
+          sources=[
+            ('ine_pobmun.zip','https://www.ine.es/pob_xls/pobmun.zip',{'www.ine.es','ine.es'},b'PK'),
+            ('elstat_census2021.pdf','https://www.statistics.gr/documents/20181/17286366/APOF_APOT_MON_DHM_KOIN.pdf/41ae8e6c-5860-b58e-84f7-b64f9bc53ec4',{'www.statistics.gr','statistics.gr'},b'%PDF')
+          ]
+          report=[]
+          for name,url,hosts,magic in sources:
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 national statistics reference'}),timeout=45) as r:
+                      final=r.geturl();u=urllib.parse.urlsplit(final)
+                      assert r.status==200 and u.scheme=='https' and u.hostname in hosts
+                      data=r.read(25*1024*1024+1)
+                      assert data.startswith(magic) and len(data)<=25*1024*1024,(len(data),data[:16])
+                  p=out/name;p.write_bytes(data)
+                  row={'filename':name,'source_url':url,'final_url':final,'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+                  if name.endswith('.zip'):
+                      with zipfile.ZipFile(p) as z:
+                          assert len(set(z.namelist()))==len(z.namelist()) and sum(i.file_size for i in z.infolist())<=150*1024*1024 and z.testzip() is None
+                          row['entries']=[{'name':i.filename,'bytes':i.file_size} for i in z.infolist()]
+                  report.append(row);print(json.dumps(row,ensure_ascii=False))
+              except Exception as e:
+                  report.append({'filename':name,'source_url':url,'error':repr(e)});print('HOLD',name,repr(e))
+          (out/'capture_report.json').write_text(json.dumps(report,indent=2,ensure_ascii=False)+'\n')
+          assert any('sha256' in row for row in report)
+          PY
+      - name: Transfer national references for internal QA
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: national-population-reference
+          path: references/
+          retention-days: 1
+          if-no-files-found: error
