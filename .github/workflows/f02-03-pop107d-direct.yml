@@ -1,4 +1,4 @@
-name: F02-03 POP107D current edition bulk capture
+name: F02-03 Brașov contemporaneous administrative sources
 on:
   pull_request:
     branches: [main]
@@ -8,50 +8,27 @@ permissions:
 jobs:
   capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 2
     steps:
       - run: |
           python3 - <<'PY'
-          import urllib.request,urllib.parse,pathlib,hashlib,json,concurrent.futures,unicodedata,csv,io
-          p=pathlib.Path('reference');p.mkdir();report=[]
-          root='http://statistici.insse.ro:8077/tempo-ins/'
-          def get(n,u,body=None):
-              h={'User-Agent':'RLF-CI/1.0 public statistical reference','Accept':'application/json, text/plain, */*'}
-              if body is not None:h.update({'Content-Type':'application/json','Origin':'http://statistici.insse.ro:8077','Referer':'http://statistici.insse.ro:8077/tempo-online/'})
-              with urllib.request.urlopen(urllib.request.Request(u,data=None if body is None else json.dumps(body).encode(),headers=h),timeout=30) as r:
-                  f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).hostname=='statistici.insse.ro'
-                  b=r.read(12*1024*1024+1);assert 0<len(b)<=12*1024*1024
-              if n.endswith('.json'):json.loads(b)
-              (p/n).write_bytes(b);report.append({'name':n,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'transport':urllib.parse.urlsplit(f).scheme,'request':body});return b
-          m=json.loads(get('ins_metadata.json',root+'matrix/POP107D?lang=ro'))
-          assert m['ultimaActualizare']=='02-10-2026',m['ultimaActualizare']
-          dims=m['dimensionsMap'];assert len(dims)==6
-          def norm(s):return ''.join(c for c in unicodedata.normalize('NFKD',s.casefold()) if not unicodedata.combining(c)).strip()
-          excluded={'total','bihor','bistrita-nasaud','salaj','covasna','sibiu','botosani','neamt','galati','prahova','teleorman','arad','hunedoara','timis','brasov'}
-          excluded={norm(s) for s in excluded}
-          counties=[o for o in dims[2]['options'] if norm(o['label']) not in excluded]
-          print('Counties',[(o['label'],o['nomItemId']) for o in counties])
-          ilfov_done=set(['101']) # no filtering by undocumented labels: compare only pending locally
-          def capture(batch):
-              codes={o['nomItemId'] for o in batch}
-              loc=[o for o in dims[3]['options'] if o['parentId'] in codes and o['label'].split()[0].isdigit()]
-              selections=[[o for o in dims[0]['options'] if norm(o['label'])=='total'],[o for o in dims[1]['options'] if norm(o['label'])=='total'],batch,loc,[o for o in dims[4]['options'] if o['label'].strip()=='Anul 2024'],dims[5]['options']]
-              assert all(selections)
-              query={'language':'ro','encQuery':':'.join(','.join(str(o['nomItemId']) for o in s) for s in selections),'matCode':'POP107D','matMaxDim':m['details']['matMaxDim'],'matUMSpec':m['details']['matUMSpec'],'matRegJ':m['details'].get('matRegJ',0)}
-              n='ins_2024_'+str(batch[0]['nomItemId'])+'.csv'
+          import urllib.request,urllib.parse,pathlib,hashlib,json,concurrent.futures
+          p=pathlib.Path('reference');p.mkdir()
+          sources={'prejmer.pdf':'https://primariaprejmer.ro/wp-content/uploads/HOTARARE-ADMITERE-CANDIDATI-CL-PARTIDUL-SOCIAL-DEMOCRAT.pdf','sanpetru.pdf':'https://primaria-sanpetru.ro/wp-content/uploads/2024/04/Hotararea-nr-3-din-2024.pdf','tarlungeni.pdf':'https://comunatarlungeni.ro/wp-content/uploads/2024/04/HBECTRLG-11-admitere-APRPE.pdf','sinca.pdf':'https://comunasinca.ro/wp-content/uploads/2024/04/Hotararea-nr.-2-din-25.04.2024-privind-admiterea-listei-de-candidati-pentru-functia-de-consilier-local-al-comunei-Sinca-din-partea-Asociatiei-Partida-Romilor-Pro-Europa.pdf'}
+          def get(item):
+              n,u=item
               try:
-                  b=get(n,root+'pivot',query);rows=list(csv.DictReader(io.StringIO(b.decode('utf-8-sig')),skipinitialspace=True))
-                  assert rows and all('Valoare' in r and r['Valoare'].strip().isdigit() for r in rows)
-                  print(n,'expected',len(loc),'rows',len(rows))
-              except Exception as e:report.append({'batch':[o['label'] for o in batch],'error':repr(e)})
-          batches=[counties[i:i+4] for i in range(0,len(counties),4)]
-          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:list(ex.map(capture,batches))
-          (p/'capture_report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2));print('captured',len(report))
+                  with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 public statistical reference'}),timeout=25) as r:
+                      f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in {'primariaprejmer.ro','www.primariaprejmer.ro','primaria-sanpetru.ro','www.primaria-sanpetru.ro','comunatarlungeni.ro','www.comunatarlungeni.ro','comunasinca.ro','www.comunasinca.ro'}
+                      b=r.read(16*1024*1024+1);assert 0<len(b)<=16*1024*1024 and b.startswith(b'%PDF')
+                  (p/n).write_bytes(b);return {'name':n,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()}
+              except Exception as e:return {'name':n,'url':u,'error':repr(e)}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:report=list(ex.map(get,sources.items()))
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(report)
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
         with:
-          name: pop107d-bulk-current-edition
+          name: brasov-historical-local
           path: reference/
           retention-days: 1
           if-no-files-found: error
