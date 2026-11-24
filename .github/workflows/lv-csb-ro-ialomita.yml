@@ -1,0 +1,54 @@
+name: F02-03 Latvia historical population and Ialomita
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/lv-csb-ro-ialomita.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime,concurrent.futures
+          p=pathlib.Path('reference');p.mkdir();report=[]
+          def get(n,u,body=None):
+              h={'User-Agent':'RLF-CI/1.0 statistical reference'}
+              if body is not None:h['Content-Type']='application/json'
+              with urllib.request.urlopen(urllib.request.Request(u,data=None if body is None else json.dumps(body).encode(),headers=h),timeout=25) as r:
+                  f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in {'data.stat.gov.lv','stat.gov.lv','il.prefectura.mai.gov.ro'}
+                  b=r.read(32*1024*1024+1);assert 0<len(b)<=32*1024*1024
+              if n.endswith('.json'):json.loads(b)
+              if n.endswith('.pdf'):assert b.startswith(b'%PDF')
+              (p/n).write_bytes(b);report.append({'name':n,'url':u,'final_url':f,'request':body,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()});return b
+          def lv(t):
+              for u in ['https://data.stat.gov.lv/api/v1/en/OSP_PUB/START/POP/IR/IRS/'+t+'.px','https://data.stat.gov.lv/api/v1/en/OSP_PUB/START__POP__IR__IRS/'+t+'.px','https://data.stat.gov.lv/api/v1/en/OSP_PUB/START/POP/IR/IRS/'+t]:
+                  try:
+                      m=json.loads(get(t+'_metadata.json',u));q=[]
+                      for v in m['variables']:
+                          vals=v['values'];c=v['code']
+                          if c=='TIME':pick=['2024']
+                          elif c=='INDICATOR':pick=['POP_SY']
+                          else:pick=vals
+                          assert all(x in vals for x in pick),(c,pick)
+                          q.append({'code':c,'selection':{'filter':'item','values':pick}})
+                      get(t+'_2024.json',u,{'query':q,'response':{'format':'json'}});return
+                  except Exception as e:report.append({'url':u,'error':repr(e)})
+          def ro():
+              get('ialomita_order196.pdf','https://il.prefectura.mai.gov.ro/wp-content/uploads/sites/51/2024/04/Ordin-stabilire-membri-CJ-si-CL-1.pdf')
+          def yearbook():
+              get('lv_yearbook2024.pdf','https://stat.gov.lv/system/files/publication/2025-01/Nr_01_Latvijas_statistikas_gadagramata_2024_Statistical_Yearbook_of_Latvia_%2824_00%29_LV_EN.pdf')
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+              for f in [ex.submit(lv,'IRS030'),ex.submit(lv,'IRS031'),ex.submit(ro),ex.submit(yearbook)]:
+                  try:f.result()
+                  except Exception as e:report.append({'error':repr(e)})
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: lv-csb-ro-ialomita
+          path: reference/
+          retention-days: 1
+          if-no-files-found: error
