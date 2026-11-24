@@ -1,0 +1,55 @@
+name: F02-03 Denmark StatBank and Bacau historical reference
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/dk-statbank-ro-bacau.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime,concurrent.futures,re
+          p=pathlib.Path('reference');p.mkdir();report=[]
+          def get(name,u,hosts,body=None):
+              h={'User-Agent':'RLF-CI/1.0 public statistics'}
+              if body is not None:h['Content-Type']='application/json'
+              with urllib.request.urlopen(urllib.request.Request(u,data=None if body is None else json.dumps(body).encode(),headers=h),timeout=25) as r:
+                  f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in hosts
+                  b=r.read(20*1024*1024+1);assert 0<len(b)<=20*1024*1024
+              if name.endswith('.json'):json.loads(b)
+              if name.endswith('.pdf'):assert b.startswith(b'%PDF')
+              (p/name).write_bytes(b);report.append({'name':name,'url':u,'final_url':f,'body':body,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()});return b
+          def dk():
+              h={'api.statbank.dk'}
+              m=json.loads(get('folk1a_metadata.json','https://api.statbank.dk/v1/tableinfo/FOLK1A?lang=en',h))
+              v=[]
+              for x in m['variables']:
+                  c=x['id'];vals=x['values']
+                  if c.upper()=='OMRÅDE':pick=[a['id'] for a in vals if re.fullmatch(r'[0-9]{3}',a['id']) and int(a['id'])>=100];pick+=['000'] if any(a['id']=='000' for a in vals) else []
+                  elif c.upper()=='TID':pick=['2024K1']
+                  elif c.upper()=='ALDER':pick=['IALT']
+                  elif c.upper()=='KØN':pick=['TOT','1','2']
+                  elif c.upper()=='CIVILSTAND':pick=['TOT']
+                  else:raise ValueError(c)
+                  assert all(a in [b['id'] for b in vals] for a in pick)
+                  v.append({'code':c,'values':pick})
+              get('folk1a_2024q1.csv','https://api.statbank.dk/v1/data',h,{'table':'FOLK1A','format':'CSV','lang':'en','valuePresentation':'Code','variables':v})
+          def ro():
+              get('bacau_order129.pdf','https://onesti.ro/primarie_onesti/sites/default/files/inline-files/Ordin%20nr.129.PDF',{'onesti.ro','www.onesti.ro'})
+          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+              for f in [ex.submit(dk)]:
+                  try:f.result()
+                  except Exception as e:report.append({'error':repr(e)})
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report));assert (p/'folk1a_2024q1.csv').exists()
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: dk-statbank-ro-bacau
+          path: reference/
+          retention-days: 1
+          if-no-files-found: error
