@@ -1,4 +1,4 @@
-name: F02-03 POP107D 2024 direct and secondary evidence
+name: F02-03 POP107D current edition bulk capture
 on:
   pull_request:
     branches: [main]
@@ -8,58 +8,50 @@ permissions:
 jobs:
   capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 4
     steps:
       - run: |
           python3 - <<'PY'
-          import urllib.request,urllib.parse,pathlib,hashlib,json,concurrent.futures,re
+          import urllib.request,urllib.parse,pathlib,hashlib,json,concurrent.futures,unicodedata,csv,io
           p=pathlib.Path('reference');p.mkdir();report=[]
           root='http://statistici.insse.ro:8077/tempo-ins/'
-          ids=set('41248 41284 41346 41382 41417 41471 41541 41578 41621 41667 41701 41738 41818 41854 41925 41943 42003 42058 42076 42101 42156 42183 42236 42307 42398 42449 42464'.split())
           def get(n,u,body=None):
               h={'User-Agent':'RLF-CI/1.0 public statistical reference','Accept':'application/json, text/plain, */*'}
               if body is not None:h.update({'Content-Type':'application/json','Origin':'http://statistici.insse.ro:8077','Referer':'http://statistici.insse.ro:8077/tempo-online/'})
-              with urllib.request.urlopen(urllib.request.Request(u,data=None if body is None else json.dumps(body).encode(),headers=h),timeout=20) as r:
-                  f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).hostname in {'statistici.insse.ro','ins.gov2.ro','mariuscomper.uk'}
+              with urllib.request.urlopen(urllib.request.Request(u,data=None if body is None else json.dumps(body).encode(),headers=h),timeout=30) as r:
+                  f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).hostname=='statistici.insse.ro'
                   b=r.read(12*1024*1024+1);assert 0<len(b)<=12*1024*1024
               if n.endswith('.json'):json.loads(b)
               (p/n).write_bytes(b);report.append({'name':n,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'transport':urllib.parse.urlsplit(f).scheme,'request':body});return b
-          def direct():
-              m=json.loads(get('ins_metadata.json',root+'matrix/POP107D?lang=ro'))
-              selected=[]
-              for d in m['dimensionsMap']:
-                  opts=d['options'];label=d['label'].lower().strip()
-                  if 'localitati' in label or 'localități' in label:
-                      sel=[o for o in opts if o['label'].split()[0] in ids];assert len(sel)==27
-                  elif 'judet' in label or 'județ' in label:
-                      sel=[o for o in opts if o['label'].lower().strip() in ('brasov','brașov','braşov')]
-                  elif 'ani'==label or 'timp' in label:
-                      sel=[o for o in opts if o['label'].strip() in ('Anul 2024','2024')]
-                  elif len(opts)==1:sel=opts
-                  else:sel=[o for o in opts if o['label'].strip().lower()=='total']
-                  assert sel,(label,opts[:5])
-                  selected.append(sel)
-              query={'language':'ro','encQuery':':'.join(','.join(str(o['nomItemId']) for o in s) for s in selected),'matCode':'POP107D','matMaxDim':m['details']['matMaxDim'],'matUMSpec':m['details']['matUMSpec'],'matRegJ':m['details'].get('matRegJ',0)}
-              (p/'ins_query_selection.json').write_text(json.dumps(selected,ensure_ascii=False,indent=2))
-              get('ins_brasov_2024.csv',root+'pivot',query)
-          def secondary():
-              for code in ('POP107D','POP107D_localitati'):
-                  try:
-                      m=json.loads(get('mirror_'+code+'_metadata.json','https://ins.gov2.ro/api/datasets/'+code+'?lang=ro'))
-                      print('MIRROR',code,list(m))
-                  except Exception as e:report.append({'mirror':code,'error':repr(e)})
-          def article():
-              get('article.html','https://mariuscomper.uk/locuitori-pe-hartie/en/')
-          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-              for label,f in [(fn.__name__,ex.submit(fn)) for fn in (direct,secondary,article)]:
-                  try:f.result()
-                  except Exception as e:report.append({'source':label,'error':repr(e)})
-          (p/'capture_report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2));print(report)
+          m=json.loads(get('ins_metadata.json',root+'matrix/POP107D?lang=ro'))
+          assert m['ultimaActualizare']=='02-10-2026',m['ultimaActualizare']
+          dims=m['dimensionsMap'];assert len(dims)==6
+          def norm(s):return ''.join(c for c in unicodedata.normalize('NFKD',s.casefold()) if not unicodedata.combining(c)).strip()
+          excluded={'total','bihor','bistrita-nasaud','salaj','covasna','sibiu','botosani','neamt','galati','prahova','teleorman','arad','hunedoara','timis','brasov'}
+          excluded={norm(s) for s in excluded}
+          counties=[o for o in dims[2]['options'] if norm(o['label']) not in excluded]
+          print('Counties',[(o['label'],o['nomItemId']) for o in counties])
+          ilfov_done=set(['101']) # no filtering by undocumented labels: compare only pending locally
+          def capture(batch):
+              codes={o['nomItemId'] for o in batch}
+              loc=[o for o in dims[3]['options'] if o['parentId'] in codes and o['label'].split()[0].isdigit()]
+              selections=[[o for o in dims[0]['options'] if norm(o['label'])=='total'],[o for o in dims[1]['options'] if norm(o['label'])=='total'],batch,loc,[o for o in dims[4]['options'] if o['label'].strip()=='Anul 2024'],dims[5]['options']]
+              assert all(selections)
+              query={'language':'ro','encQuery':':'.join(','.join(str(o['nomItemId']) for o in s) for s in selections),'matCode':'POP107D','matMaxDim':m['details']['matMaxDim'],'matUMSpec':m['details']['matUMSpec'],'matRegJ':m['details'].get('matRegJ',0)}
+              n='ins_2024_'+str(batch[0]['nomItemId'])+'.csv'
+              try:
+                  b=get(n,root+'pivot',query);rows=list(csv.DictReader(io.StringIO(b.decode('utf-8-sig')),skipinitialspace=True))
+                  assert rows and all('Valoare' in r and r['Valoare'].strip().isdigit() for r in rows)
+                  print(n,'expected',len(loc),'rows',len(rows))
+              except Exception as e:report.append({'batch':[o['label'] for o in batch],'error':repr(e)})
+          batches=[counties[i:i+4] for i in range(0,len(counties),4)]
+          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:list(ex.map(capture,batches))
+          (p/'capture_report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2));print('captured',len(report))
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: pop107d-direct-capture
+          name: pop107d-bulk-current-edition
           path: reference/
           retention-days: 1
           if-no-files-found: error
