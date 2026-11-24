@@ -1,0 +1,49 @@
+name: Romania INS census and TEMPO metadata
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/romania-ins.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Capture primary sources
+        run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,zipfile,json,datetime
+          out=pathlib.Path('references');out.mkdir()
+          urls={'census_1_22.xlsx':'https://www.recensamantromania.ro/wp-content/uploads/2023/05/Tabel-1.22.xlsx','tempo_POP107D.json':'https://statistici.insse.ro:8077/tempo-ins/matrix/POP107D'}
+          report=[]
+          for name,url in urls.items():
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 statistical reference','Accept':'application/json' if name.endswith('.json') else '*/*'}),timeout=35) as r:
+                      final=r.geturl();assert r.status==200 and urllib.parse.urlsplit(final).scheme=='https' and urllib.parse.urlsplit(final).hostname in ('www.recensamantromania.ro','recensamantromania.ro','statistici.insse.ro')
+                      b=r.read(16*1024*1024+1);assert 0<len(b)<=16*1024*1024
+                  p=out/name
+                  if name.endswith('.xlsx'):
+                      import io
+                      with zipfile.ZipFile(io.BytesIO(b)) as z:
+                          assert z.testzip() is None and len(set(z.namelist()))==len(z.namelist()) and 'xl/workbook.xml' in z.namelist()
+                  else:
+                      data=json.loads(b)
+                      print('META_KEYS',list(data) if isinstance(data,dict) else type(data).__name__)
+                      for k,v in data.items():
+                          if isinstance(v,list):print('META_LIST',k,len(v),str(v[:2])[:3000])
+                          elif isinstance(v,dict):print('META_DICT',k,list(v))
+                          else:print('META_SCALAR',k,str(v)[:2000])
+                  p.write_bytes(b)
+                  row={'filename':name,'url':url,'final_url':final,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()};report.append(row);print(json.dumps(row))
+              except Exception as e:report.append({'filename':name,'url':url,'error':repr(e)});print('HOLD',name,repr(e))
+          (out/'capture_report.json').write_text(json.dumps(report,indent=2)+'\n')
+          assert any('sha256' in x for x in report)
+          PY
+      - name: Transfer reference
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: romania-ins-reference
+          path: references/
+          retention-days: 1
+          if-no-files-found: error
