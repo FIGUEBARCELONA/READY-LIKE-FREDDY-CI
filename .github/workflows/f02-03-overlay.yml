@@ -1,0 +1,34 @@
+name: F02-03 overlay primary source custody
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/f02-03-overlay.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime,concurrent.futures
+          p=pathlib.Path('reference');p.mkdir();report=[]
+          sources={'fr60.pdf':'https://www.insee.fr/fr/statistiques/fichier/7728806/dep60.pdf','fr85.pdf':'https://www.insee.fr/fr/statistiques/fichier/7728806/dep85.pdf','gr23.pdf':'https://www.ypes.gr/wp-content/uploads/2023/08/fek-4821-64436-20230801.pdf','maramures.pdf':'https://cnp.ro/wp-content/uploads/2025/05/Economia-judetului-Maramures.pdf'}
+          def get(item):
+              n,u=item
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 public statistical reference'}),timeout=25) as r:
+                      f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in {'www.insee.fr','insee.fr','www.ypes.gr','ypes.gr','cnp.ro','www.cnp.ro'}
+                      b=r.read(24*1024*1024+1);assert 0<len(b)<=24*1024*1024 and b.startswith(b'%PDF')
+                  (p/n).write_bytes(b);return {'name':n,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()}
+              except Exception as e:return {'name':n,'url':u,'error':repr(e)}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:report=list(ex.map(get,sources.items()))
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(report)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: overlay-source-custody
+          path: reference/
+          retention-days: 1
+          if-no-files-found: error
