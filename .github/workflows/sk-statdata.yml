@@ -1,4 +1,4 @@
-name: SK historical statistics and PT DGAL official reference
+name: SK official STATdata municipal CSV
 on:
   pull_request:
     branches: [main]
@@ -10,34 +10,41 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
-      - name: Capture public statistical sources
+      - name: Resolve documented public download URL
         run: |
           python3 - <<'PY'
-          import urllib.request, urllib.parse, pathlib, hashlib, json, concurrent.futures, datetime
+          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime,zipfile,io
           p=pathlib.Path('reference');p.mkdir()
-          sources=[
-            ('sk_openapi.json','https://statdata.statistics.sk/public/api/dc/v3/api-docs'),
-            ('ro_teleorman_2024.pdf','https://tr.prefectura.mai.gov.ro/wp-content/uploads/sites/24/2024/04/Ordin-stabilire-numar-consilieri-locali-pe-circumscriptii-electorale-pentru-alegerile-locale-din-9-iunie-2024.pdf')]
-          def fetch(x):
-              name,url=x
-              try:
-                  with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 statistical reference'}),timeout=35) as r:
-                      final=r.geturl();assert r.status==200 and urllib.parse.urlsplit(final).scheme=='https' and urllib.parse.urlsplit(final).hostname in {'statdata.statistics.sk','data.statistics.sk','portalautarquico.dgal.gov.pt','tr.prefectura.mai.gov.ro'}
-                      b=r.read(30*1024*1024+1);assert 0<len(b)<=30*1024*1024
-                  if name.endswith('.pdf'):assert b.startswith(b'%PDF')
-                  else:
-                      d=json.loads(b);print(name,str(d)[:2000])
-                  (p/name).write_bytes(b)
-                  return {'filename':name,'url':url,'final_url':final,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()}
-              except Exception as e:return {'filename':name,'url':url,'error':repr(e)}
-          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:report=list(ex.map(fetch,sources))
-          print(json.dumps(report));(p/'capture_report.json').write_text(json.dumps(report,indent=2)+'\n')
-          assert any('sha256' in x for x in report)
+          u='https://statdata.statistics.sk/public/api/dc/opendata/cube/dataset/download-url'
+          payload={'dataCubePublicId':'om7101rr','lang':'EN','type':'CSV'}
+          def get(url,limit,data=None):
+              with urllib.request.urlopen(urllib.request.Request(url,data=data,headers={'User-Agent':'RLF-CI/1.0 statistical reference','Accept':'*/*','Content-Type':'application/json'}),timeout=60) as r:
+                  f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname.endswith('.statistics.sk')
+                  b=r.read(limit+1);assert 0<len(b)<=limit
+              return b,f
+          b,f=get(u,65536,json.dumps(payload).encode());(p/'download_url_response.json').write_bytes(b);d=json.loads(b);print(d)
+          def urls(v):
+              if isinstance(v,str) and v.startswith('https://'):yield v
+              elif isinstance(v,dict):
+                  for x in v.values():yield from urls(x)
+              elif isinstance(v,list):
+                  for x in v:yield from urls(x)
+          link=list(dict.fromkeys(urls(d)));assert len(link)==1 and urllib.parse.urlsplit(link[0]).hostname.endswith('.statistics.sk'),link
+          b,f=get(link[0],60*1024*1024)
+          name='om7101rr.csv.zip' if b.startswith(b'PK') else 'om7101rr.csv'
+          if name.endswith('.zip'):
+              with zipfile.ZipFile(io.BytesIO(b)) as z:
+                  assert z.testzip() is None and sum(x.file_size for x in z.infolist())<=200*1024*1024
+                  print(z.namelist())
+          else: print(b[:500])
+          (p/name).write_bytes(b)
+          r={'request':u,'payload':payload,'download_url':link[0],'final_url':f,'filename':name,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+          (p/'capture_report.json').write_text(json.dumps(r,indent=2)+'\n');print(r)
           PY
-      - name: Transfer evidence
+      - name: Transfer statistical source
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: sk-api-ro-teleorman-reference
+          name: sk-statdata-csv
           path: reference/
           retention-days: 1
           if-no-files-found: error
