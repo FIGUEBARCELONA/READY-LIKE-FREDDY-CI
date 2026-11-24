@@ -1,4 +1,4 @@
-name: F02-03 Swedish SCB full population 2023
+name: F02-03 Sweden official historical workbook and Dolj aggregate
 on:
   pull_request:
     branches: [main]
@@ -10,38 +10,32 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Capture all marital status and sex categories
+      - name: Download official published files
         run: |
           python3 - <<'PY'
-          import urllib.request, urllib.parse, pathlib, hashlib, json, datetime, re
+          import urllib.request, urllib.parse, pathlib, hashlib, json, datetime, concurrent.futures, zipfile, io
           p=pathlib.Path('reference');p.mkdir();report=[]
-          u='https://api.scb.se/OV0104/v1/doris/en/ssd/START/BE/BE0101/BE0101A/BefolkningNy'
-          def get(name,body=None):
-              headers={'User-Agent':'RLF-CI/1.0 public statistical reference'}
-              if body is not None:headers['Content-Type']='application/json'
-              with urllib.request.urlopen(urllib.request.Request(u,data=None if body is None else json.dumps(body).encode(),headers=headers),timeout=30) as r:
-                  f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname=='api.scb.se'
-                  b=r.read(10*1024*1024+1);assert 0<len(b)<=10*1024*1024
-              d=json.loads(b);(p/name).write_bytes(b);report.append({'name':name,'url':u,'final_url':f,'request':body,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()});return d
-          m=get('scb_metadata.json');q=[]
-          for v in m['variables']:
-              c=v['code'];vv=v['values']
-              if c=='Region':pick=[x for x in vv if re.fullmatch('[0-9]{4}',x)];assert len(pick)==290
-              elif c=='Civilstand':pick=vv;assert len(pick)==4
-              elif c=='Alder':pick=['tot']
-              elif c=='Kon':pick=['1','2']
-              elif c=='ContentsCode':pick=['BE0101N1']
-              elif c=='Tid':pick=['2023']
-              else:raise ValueError(c)
-              assert all(x in vv for x in pick)
-              q.append({'code':c,'selection':{'filter':'item','values':pick}})
-          d=get('scb_2023.json',{'query':q,'response':{'format':'json'}});assert len(d['data'])==290*4*2
-          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report));print('ROWS',len(d['data']))
+          def get(name,u,hosts,kind):
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 public statistical reference'}),timeout=25) as r:
+                      f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in hosts
+                      b=r.read(25*1024*1024+1);assert 0<len(b)<=25*1024*1024
+                  if kind=='xlsx':
+                      with zipfile.ZipFile(io.BytesIO(b)) as z:assert 'xl/workbook.xml' in z.namelist() and z.testzip() is None
+                  else:assert b.startswith(b'%PDF')
+                  (p/name).write_bytes(b);report.append({'name':name,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()})
+              except Exception as e:report.append({'url':u,'error':repr(e)})
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+              fs=[ex.submit(get,'scb_historical.xlsx','https://www.scb.se/contentassets/ef676b89b44d4bcbacce5b2d399065cd/be0101_folkmangdkom2024.xlsx',{'scb.se','www.scb.se'},'xlsx'),ex.submit(get,'scb_annual.xlsx','https://www.scb.se/contentassets/ef676b89b44d4bcbacce5b2d399065cd/be0101_tabhel2024.xlsx',{'scb.se','www.scb.se'},'xlsx'),ex.submit(get,'dolj_cnp.pdf','https://cnp.ro/wp-content/uploads/2025/05/Economia-judetului-Dolj.pdf',{'cnp.ro','www.cnp.ro'},'pdf')]
+              for f in fs:f.result()
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
+          assert (p/'scb_historical.xlsx').exists()
           PY
       - name: Custody transfer
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: se-scb-2023
+          name: scb-workbook-dolj
           path: reference/
           retention-days: 1
           if-no-files-found: error
