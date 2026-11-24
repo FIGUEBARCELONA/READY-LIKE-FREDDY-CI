@@ -1,0 +1,59 @@
+name: ISTAT provisional archive availability
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/istat-archive-check.yml']
+permissions:
+  contents: read
+jobs:
+  availability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Query public web archive indexes
+        run: |
+          python3 - <<'PY'
+          import urllib.request, urllib.parse, json
+          source='https://demo.istat.it/data/d7b/D7B2023.csv.zip'
+          queries=[
+            'https://archive.org/wayback/available?'+urllib.parse.urlencode({'url':source,'timestamp':'20240601'}),
+            'https://web.archive.org/cdx/search/cdx?'+urllib.parse.urlencode({'url':source,'from':'2024','to':'2024','output':'json','filter':'statuscode:200'})
+          ]
+          for url in queries:
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 archival availability check'}),timeout=25) as r:
+                      b=r.read(512*1024+1);assert len(b)<=512*1024
+                      data=json.loads(b);print(json.dumps({'request':url,'status':r.status,'response':data},ensure_ascii=False))
+              except Exception as exc: print(json.dumps({'request':url,'error':repr(exc)}))
+          PY
+      - name: Recover identified archived provisional binary
+        run: |
+          python3 - <<'PY'
+          import urllib.request, urllib.parse, pathlib, hashlib, base64, zipfile, json, datetime, io
+          out=pathlib.Path('archive-custody');out.mkdir()
+          expected='5Y6OHXKFX6PVCJIGCGIQ462LRIGHITST'
+          origin='https://demo.istat.it/data/d7b/D7B2023.csv.zip'
+          for ts in ('20240523054440','20240618194145'):
+              url='https://web.archive.org/web/'+ts+'id_/'+origin
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 archival custody'}),timeout=45) as r:
+                      final=r.geturl();assert r.status==200 and urllib.parse.urlsplit(final).scheme=='https' and urllib.parse.urlsplit(final).hostname=='web.archive.org' and ts in final
+                      b=r.read(12*1024*1024+1);assert 0<len(b)<=12*1024*1024 and b.startswith(b'PK')
+                  digest=base64.b32encode(hashlib.sha1(b).digest()).decode()
+                  assert digest==expected,(digest,expected)
+                  with zipfile.ZipFile(io.BytesIO(b)) as z:
+                      assert z.testzip() is None and len(set(z.namelist()))==len(z.namelist()) and sum(i.file_size for i in z.infolist())<=200*1024*1024
+                      entries=z.namelist()
+                  (out/'D7B2023_provisional_archived.zip').write_bytes(b)
+                  report={'original_url':origin,'archive_url':url,'final_url':final,'timestamp':ts,'cdx_digest_sha1_base32':expected,'computed_digest_sha1_base32':digest,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'entries':entries,'retrieved_utc':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+                  (out/'archive_report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report));break
+              except Exception as exc: print('HOLD',url,repr(exc))
+          else: raise SystemExit('No archived original with matching digest recovered')
+          PY
+      - name: Transfer archived provisional original
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: istat-provisional-2024-archive
+          path: archive-custody/
+          retention-days: 1
+          if-no-files-found: error
