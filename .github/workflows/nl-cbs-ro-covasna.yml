@@ -1,0 +1,55 @@
+name: Recover Covasna historical INS publication from archive
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/nl-cbs-ro-covasna.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Inspect archived payload and official county aggregate
+        run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,base64,json,concurrent.futures
+          p=pathlib.Path('reference');p.mkdir();report=[]
+          def get(name,u,hosts,kind):
+              with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 archival statistical reference'}),timeout=20) as r:
+                  f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in hosts
+                  b=r.read(16*1024*1024+1);assert 0<len(b)<=16*1024*1024
+              if kind=='json':json.loads(b)
+              else:assert b.startswith(b'%PDF')
+              (p/name).write_bytes(b)
+              report.append({'name':name,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()})
+              return b
+          def archive():
+              original='https://covasna.insse.ro/wp-content/uploads/2024/04/12_10-POPULATIA-0101-loc-sex.pdf'
+              u='https://web.archive.org/cdx/search/cdx?'+urllib.parse.urlencode({'url':original,'output':'json','from':'2024','to':'2025','filter':'statuscode:200'})
+              d=json.loads(get('covasna_cdx.json',u,{'web.archive.org'},'json'));print('CDX',d)
+              for item in d[1:3]:
+                  ts,original,digest=item[1],item[2],item[5]
+                  u='https://web.archive.org/web/'+ts+'id_/'+original
+                  try:
+                      with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 archival statistical reference'}),timeout=20) as r:
+                          f=r.geturl();assert ts in f and urllib.parse.urlsplit(f).hostname=='web.archive.org' and urllib.parse.urlsplit(f).scheme=='https'
+                          b=r.read(16*1024*1024+1);assert 0<len(b)<=16*1024*1024 and b.startswith(b'%PDF')
+                      assert base64.b32encode(hashlib.sha1(b).digest()).decode()==digest
+                      (p/'covasna_archived.pdf').write_bytes(b);report.append({'name':'covasna_archived.pdf','url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'archive_sha1_base32':digest});break
+                  except Exception as e:report.append({'url':u,'error':repr(e)})
+          def aggregate():
+              get('cnp_covasna.pdf','https://cnp.ro/wp-content/uploads/2025/05/Economia-judetului-Covasna.pdf',{'cnp.ro','www.cnp.ro'},'pdf')
+          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+              for fn,f in [(fn,ex.submit(fn)) for fn in (archive,aggregate)]:
+                  try:f.result()
+                  except Exception as e:report.append({'source':fn.__name__,'error':repr(e)})
+          (p/'archive_capture_report.json').write_text(json.dumps(report,indent=2));print(report)
+          PY
+      - name: Transfer archive evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: covasna-archive-evidence
+          path: reference/
+          retention-days: 1
+          if-no-files-found: error
