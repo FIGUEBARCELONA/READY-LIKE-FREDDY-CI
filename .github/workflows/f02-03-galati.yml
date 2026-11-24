@@ -1,4 +1,4 @@
-name: F02-03 Galați source custody
+name: F02-03 INSEE 2022 historical geography custody
 on:
   pull_request:
     branches: [main]
@@ -14,16 +14,16 @@ jobs:
           python3 - <<'PY'
           import urllib.request,urllib.parse,pathlib,hashlib,json,datetime
           p=pathlib.Path('reference');p.mkdir()
-          u='https://gl.prefectura.mai.gov.ro/wp-content/uploads/sites/46/2024/04/O.P.-stabilire-nr.-consilieri.pdf'
+          u='https://www.insee.fr/fr/statistiques/fichier/8290591/ensemble.zip'
           with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 public statistical reference'}),timeout=25) as r:
-              f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname=='gl.prefectura.mai.gov.ro'
-              b=r.read(20*1024*1024+1);assert 0<len(b)<=20*1024*1024 and b.startswith(b'%PDF')
-          (p/'galati.pdf').write_bytes(b)
-          (p/'capture_report.json').write_text(json.dumps({'name':'galati.pdf','url':u,'final_url':f,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()},indent=2))
+              f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostnamein {'www.insee.fr','insee.fr'}
+              b=r.read(20*1024*1024+1);assert 0<len(b)<=20*1024*1024 and b.startswith(b'PK')
+          (p/'insee2022.zip').write_bytes(b)
+          (p/'capture_report.json').write_text(json.dumps({'name':'insee2022.zip','url':u,'final_url':f,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()},indent=2))
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: galati-historical-reference
+          name: insee2022-historical-reference
           path: reference/
           retention-days: 1
           if-no-files-found: error
