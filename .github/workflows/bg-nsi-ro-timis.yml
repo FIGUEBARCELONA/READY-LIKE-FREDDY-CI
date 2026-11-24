@@ -1,0 +1,53 @@
+name: F02-03 Bulgaria NSI and Timis historical population
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/bg-nsi-ro-timis.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Capture official historical sources
+        run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime,concurrent.futures,re,html
+          p=pathlib.Path('reference');p.mkdir();report=[]
+          def get(name,u,hosts,kind):
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0 RLF statistical research'}),timeout=25) as r:
+                      f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in hosts
+                      b=r.read(25*1024*1024+1);assert 0<len(b)<=25*1024*1024
+                  if kind=='pdf':assert b.startswith(b'%PDF')
+                  if kind=='xlsx':assert b.startswith(b'PK') or b.startswith(bytes.fromhex('d0cf11e0'))
+                  (p/name).write_bytes(b);report.append({'name':name,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()})
+                  return b
+              except Exception as e:report.append({'url':u,'error':repr(e)})
+          hosts={'nsi.bg','www.nsi.bg','dev.nsi.bg','new.nsi.bg'}
+          def bg():
+              u='https://www.nsi.bg/en/statistical-data/206/651'
+              b=get('nsi_current.html',u,hosts,'html')
+              if b:
+                  s=b.decode(errors='replace')
+                  for link in re.findall(r'href=["\x27]([^"\x27]+)["\x27]',s):
+                      if 'Pop_6.1.1' in link or re.search(r'\.xlsx(?:\?|$)',link,re.I):
+                          get('nsi_series.xlsx',urllib.parse.urljoin(u,html.unescape(link)),hosts,'xlsx')
+              get('nsi_en_2023.html','https://dev.nsi.bg/en/content/2975/population-districts-municipalities-place-residence-and-sex',hosts,'html')
+              get('nsi_bg_2023.html','https://dev.nsi.bg/bg/content/2975',hosts,'html')
+              get('nsi_2023_district.pdf','https://www.nsi.bg/en/file/24840/ATTD_RB_2023_en_1C6T8RM.pdf',hosts,'pdf')
+              get('nsi_2023_demography.pdf','https://nsi.bg/sites/default/files/files/publications/DMGR2023.pdf',hosts,'pdf')
+          def ro():
+              get('timis_order.pdf','https://tm.prefectura.mai.gov.ro/wp-content/uploads/sites/22/2024/04/Ordin-privind-numar-consilieri-pentru-consiliile-locale-municipipale-orasenesti-si-comunale-din-judetul-Timis-.pdf',{'tm.prefectura.mai.gov.ro'},'pdf')
+          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+              list(ex.map(lambda f:f(),[bg,ro]))
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
+          PY
+      - name: Custody transfer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bg-nsi-ro-timis
+          path: reference/
+          retention-days: 1
+          if-no-files-found: error
