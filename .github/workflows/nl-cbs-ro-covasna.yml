@@ -1,0 +1,55 @@
+name: CBS historical municipal population and Covasna INS
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/nl-cbs-ro-covasna.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Capture CBS official OData and INS regional document
+        run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime,concurrent.futures
+          p=pathlib.Path('reference');p.mkdir()
+          report=[]
+          def get(name,url,hosts,kind='json'):
+              with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 statistical reference','Accept':'*/*'}),timeout=25) as r:
+                  f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in hosts
+                  b=r.read(20*1024*1024+1);assert 0<len(b)<=20*1024*1024
+              if kind=='json':d=json.loads(b)
+              else:assert b.startswith(b'%PDF');d=None
+              (p/name).write_bytes(b)
+              return d,{'name':name,'url':url,'final_url':f,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+          def cbs():
+              h={'opendata.cbs.nl'}
+              base='https://opendata.cbs.nl/ODataApi/odata/70072ned/'
+              d,r=get('cbs_properties.json',base+'DataProperties',h);report.append(r)
+              choices=[v for v in d['value'] if v.get('Title')=='Totale bevolking' and v.get('Key')];assert len(choices)==1,choices
+              key=choices[0]['Key'];print('POPULATION_FIELD',key)
+              u=base+'TypedDataSet?'+urllib.parse.urlencode({'$filter':"Perioden eq '2024JJ00' and startswith(RegioS,'GM')",'$select':'RegioS,Perioden,'+key})
+              d,r=get('cbs_2024.json',u,h);report.append(r);print('CBS ROWS',len(d['value']),d['value'][:3]);assert '@odata.nextLink' not in d and 'odata.nextLink' not in d
+              d,r=get('cbs_regions.json',base+'RegioS?'+urllib.parse.urlencode({'$filter':"startswith(Key,'GM')",'$select':'Key,Title'}),h);report.append(r);assert '@odata.nextLink' not in d and 'odata.nextLink' not in d
+              d,r=get('cbs_table_info.json',base+'TableInfos',h);report.append(r)
+          def covasna():
+              for n,u in [('covasna_ins.pdf','https://covasna.insse.ro/wp-content/uploads/2024/04/12_10-POPULATIA-0101-loc-sex.pdf'),('covasna_prefecture.pdf','https://cv.prefectura.mai.gov.ro/wp-content/uploads/sites/41/2024/04/numar-consilieri.pdf')]:
+                  try:
+                      d,r=get(n,u,{urllib.parse.urlsplit(u).hostname},'pdf');report.append(r)
+                  except Exception as e:report.append({'name':n,'url':u,'error':repr(e)})
+          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+              for fn,f in [(fn,ex.submit(fn)) for fn in (cbs,covasna)]:
+                  try:f.result()
+                  except Exception as e:report.append({'source':fn.__name__,'error':repr(e)})
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(report)
+          assert any('sha256' in r for r in report)
+          PY
+      - name: Transfer original public evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nl-cbs-ro-covasna-reference
+          path: reference/
+          retention-days: 1
+          if-no-files-found: error
