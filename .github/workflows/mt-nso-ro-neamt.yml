@@ -25,10 +25,10 @@ jobs:
                   (p/name).write_bytes(b);report.append({'name':name,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()})
               except Exception as e:report.append({'name_attempted':name,'url':u,'error':repr(e)})
           with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-              fs=[ex.submit(get,'nso.xlsx','https://nso.gov.mt/wp-content/uploads/End-of-year-population-estimates-by-locality-sex-and-citzenship_2012-2025.xlsx',{'nso.gov.mt','www.nso.gov.mt'}),ex.submit(get,'neamt_annex.pdf','https://poianateiului.ro/wp-content/uploads/2025/12/3.ANEXA-ORD.PREFECT-CORFICIENTI-PRIMARIVICEPRIMARI.pdf',{'poianateiului.ro','www.poianateiului.ro'}),ex.submit(get,'neamt_order.pdf','https://nt.prefectura.mai.gov.ro/wp-content/uploads/sites/38/2024/04/OP-143-din-09.04.2024-nr-consilieri-locali.pdf',{'nt.prefectura.mai.gov.ro'})]
+              fs=[ex.submit(get,'malta_pq24367.pdf','https://parlament.mt/media/131979/pq24367.pdf',{'parlament.mt','www.parlament.mt'}),ex.submit(get,'malta_gazette1326.pdf','https://www.gov.mt/en/Government/DOI/Government%20Gazette/Government%20Notices/PublishingImages/Pages/2024/10/GovNotices0810/LC%20Population%202024%20Gaz%208.10.pdf',{'gov.mt','www.gov.mt'})]
               for f in fs:f.result()
           (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
-          assert (p/'nso.xlsx').exists() and (p/'neamt_annex.pdf').exists()
+          assert (p/'malta_pq24367.pdf').exists() and (p/'malta_gazette1326.pdf').exists()
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
