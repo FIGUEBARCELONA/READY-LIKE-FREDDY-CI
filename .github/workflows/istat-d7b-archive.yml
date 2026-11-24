@@ -1,0 +1,59 @@
+name: ISTAT D7B historical monthly publication
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/istat-d7b-archive.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Discover and capture published 2023 monthly archive
+        run: |
+          python3 - <<'PY'
+          import urllib.request, urllib.parse, pathlib, hashlib, zipfile, json, datetime, re
+          from html.parser import HTMLParser
+          out=pathlib.Path('references');out.mkdir()
+          page='https://demo.istat.it/app/?a=2023&i=D7B&l=it'
+          def retrieve(url,limit):
+              with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 statistical reference'}),timeout=45) as r:
+                  final=r.geturl();assert r.status==200 and urllib.parse.urlsplit(final).scheme=='https' and urllib.parse.urlsplit(final).hostname=='demo.istat.it'
+                  b=r.read(limit+1);assert 0<len(b)<=limit
+              return b,final
+          def save(name,url,b,final):
+              (out/name).write_bytes(b)
+              return {'filename':name,'url':url,'final_url':final,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+          b,final=retrieve(page,5*1024*1024);report=[save('istat_d7b_2023.html',page,b,final)]
+          class Links(HTMLParser):
+              def __init__(self): super().__init__();self.links=[]
+              def handle_starttag(self,tag,attrs):
+                  for k,v in attrs:
+                      if v and '.zip' in v.lower(): self.links.append((tag,k,v))
+          p=Links();p.feed(b.decode('utf-8',errors='replace'));print('LINKS',json.dumps(p.links))
+          links=set()
+          for tag,k,v in p.links:
+              if k in ('href','src') and '2023' in v:
+                  u=urllib.parse.urljoin(final,v)
+                  if urllib.parse.urlsplit(u).hostname=='demo.istat.it' and urllib.parse.urlsplit(u).scheme=='https' and urllib.parse.urlsplit(u).path.lower().endswith('.zip'): links.add(u)
+          for i,u in enumerate(sorted(links)[:3]):
+              try:
+                  data,f=retrieve(u,30*1024*1024)
+                  assert data.startswith(b'PK')
+                  name=pathlib.PurePosixPath(urllib.parse.urlsplit(u).path).name
+                  import io
+                  with zipfile.ZipFile(io.BytesIO(data)) as z:
+                      assert len(z.namelist())==len(set(z.namelist())) and sum(x.file_size for x in z.infolist())<=300*1024*1024 and z.testzip() is None
+                      print('ZIP',name,z.namelist()[:30])
+                  report.append(save(name,u,data,f))
+              except Exception as exc: print('HOLD',u,repr(exc))
+          (out/'capture_report.json').write_text(json.dumps(report,indent=2)+'\n')
+          PY
+      - name: Transfer source evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: istat-d7b-2023-reference
+          path: references/
+          retention-days: 1
+          if-no-files-found: error
