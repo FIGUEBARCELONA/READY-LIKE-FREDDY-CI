@@ -16,15 +16,13 @@ jobs:
           import urllib.request, urllib.parse, pathlib, hashlib, json, concurrent.futures, datetime
           p=pathlib.Path('reference');p.mkdir()
           sources=[
-            ('sk_metadata.json','https://statdata.statistics.sk/public/api/dc/opendata/cube/dataset/om7101rr'),
-            ('sk_legacy.json','https://data.statistics.sk/api/v2/dataset/om7101rr/om7101rr_obc/2023/om7101rr_ukaz/om7101rr_poh?lang=en'),
-            ('sk_dimensions.json','https://data.statistics.sk/api/v2/dimension/om7101rr/om7101rr_obc'),
-            ('pt_dgal_2026.pdf','https://portalautarquico.dgal.gov.pt/ficheiros/?channel=a7187039-4863-4c6c-9ef0-1422b677728d&content_id=D0060CD0-097C-48C9-97E3-23F4015B9313&dtestate=2026-01-12111736&field=storage_image&filetype=pdf&lang=pt&schema=f7664ca7-3a1a-4b25-9f46-2056eef44c33&ver=1')]
+            ('sk_openapi.json','https://statdata.statistics.sk/public/api/dc/v3/api-docs'),
+            ('ro_teleorman_2024.pdf','https://tr.prefectura.mai.gov.ro/wp-content/uploads/sites/24/2024/04/Ordin-stabilire-numar-consilieri-locali-pe-circumscriptii-electorale-pentru-alegerile-locale-din-9-iunie-2024.pdf')]
           def fetch(x):
               name,url=x
               try:
                   with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 statistical reference'}),timeout=35) as r:
-                      final=r.geturl();assert r.status==200 and urllib.parse.urlsplit(final).scheme=='https' and urllib.parse.urlsplit(final).hostname in {'statdata.statistics.sk','data.statistics.sk','portalautarquico.dgal.gov.pt'}
+                      final=r.geturl();assert r.status==200 and urllib.parse.urlsplit(final).scheme=='https' and urllib.parse.urlsplit(final).hostname in {'statdata.statistics.sk','data.statistics.sk','portalautarquico.dgal.gov.pt','tr.prefectura.mai.gov.ro'}
                       b=r.read(30*1024*1024+1);assert 0<len(b)<=30*1024*1024
                   if name.endswith('.pdf'):assert b.startswith(b'%PDF')
                   else:
@@ -39,7 +37,7 @@ jobs:
       - name: Transfer evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: sk-pt-reference
+          name: sk-api-ro-teleorman-reference
           path: reference/
           retention-days: 1
           if-no-files-found: error
