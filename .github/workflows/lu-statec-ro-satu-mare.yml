@@ -1,0 +1,39 @@
+name: F02-03 Luxembourg STATEC historical municipal reference
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/lu-statec-ro-satu-mare.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Capture official statistical data and order reference
+        run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime,concurrent.futures
+          p=pathlib.Path('reference');p.mkdir();report=[]
+          def get(name,u,hosts,accept,kind):
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 public statistical reference','Accept':accept}),timeout=25) as r:
+                      f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in hosts
+                      b=r.read(16*1024*1024+1);assert 0<len(b)<=16*1024*1024
+                  if kind=='pdf':assert b.startswith(b'%PDF')
+                  elif kind=='json':json.loads(b)
+                  elif kind=='csv':assert b.count(b',')>100 and not b.lstrip().startswith(b'<')
+                  (p/name).write_bytes(b);report.append({'name':name,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'accept':accept})
+              except Exception as e:report.append({'url':u,'error':repr(e)})
+          base='https://lustat.statec.lu/rest/data/LU1,DF_X021,1.1/all?startPeriod=2024&endPeriod=2024'
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+              fs=[ex.submit(get,'statec_2024.csv',base,{'lustat.statec.lu'},'application/vnd.sdmx.data+csv;version=1.0.0','csv'),ex.submit(get,'statec_2024.json',base,{'lustat.statec.lu'},'application/vnd.sdmx.data+json;version=1.0.0','json'),ex.submit(get,'statec_structure.xml','https://lustat.statec.lu/rest/dataflow/LU1/DF_X021/1.1?references=all',{'lustat.statec.lu'},'application/vnd.sdmx.structure+xml;version=2.1','xml'),ex.submit(get,'satu_mare_order_citation.pdf','https://sm.prefectura.mai.gov.ro/wp-content/uploads/sites/32/2024/04/Hotararea-9-25.04.2024.pdf',{'sm.prefectura.mai.gov.ro'},'application/pdf','pdf')]
+              for f in fs:f.result()
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: lu-statec-ro-satu-mare
+          path: reference/
+          retention-days: 1
+          if-no-files-found: error
