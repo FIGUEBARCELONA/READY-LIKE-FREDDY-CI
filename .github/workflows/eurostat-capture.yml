@@ -1,0 +1,76 @@
+name: Eurostat LAU 2024 transport QA
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/eurostat-capture.yml']
+  workflow_dispatch:
+    inputs:
+      storage_budget_confirmed:
+        description: 'Zero-cost storage allowance and source redistribution terms confirmed'
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: eurostat-lau-2024-capture
+  cancel-in-progress: false
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Retrieve original and validate ZIP
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib, ssl, urllib.request, urllib.parse, zipfile, datetime
+          from xml.etree import ElementTree as ET
+          url = 'https://ec.europa.eu/eurostat/documents/345175/501971/EU-27-LAU-2024-NUTS-2024.xlsx/12971f56-c035-dbab-4d9f-ff1dcc617bb3?t=1737036272863'
+          target = pathlib.Path('capture')
+          target.mkdir(exist_ok=False)
+          path = target / 'EU-27-LAU-2024-NUTS-2024.xlsx'
+          class StrictRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  u = urllib.parse.urlsplit(newurl)
+                  if u.scheme != 'https' or u.hostname != 'ec.europa.eu' or u.path != urllib.parse.urlsplit(url).path or u.username or u.password or u.port not in (None,443):
+                      raise ValueError('Unexpected redirect')
+                  return super().redirect_request(req, fp, code, msg, headers, newurl)
+          opener = urllib.request.build_opener(StrictRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context()))
+          sha = hashlib.sha256()
+          size = 0
+          with opener.open(urllib.request.Request(url, headers={'User-Agent':'RLF-CI/1.0 source custody'}), timeout=60) as response, path.open('xb') as dest:
+              assert response.status == 200
+              mime = response.headers.get_content_type()
+              assert mime == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', mime
+              while chunk := response.read(1024 * 1024):
+                  size += len(chunk)
+                  assert size <= 80*1024*1024
+                  sha.update(chunk)
+                  dest.write(chunk)
+              if response.headers.get('Content-Length'):
+                  assert size == int(response.headers['Content-Length'])
+              final_url = response.geturl()
+          assert size > 0
+          ns = {'x':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+          with zipfile.ZipFile(path) as z:
+              infos = z.infolist()
+              names = z.namelist()
+              assert len(names) == len(set(names)) and len(names) <= 300
+              assert sum(i.file_size for i in infos) <= 500*1024*1024
+              assert {'[Content_Types].xml','_rels/.rels','xl/workbook.xml','xl/_rels/workbook.xml.rels'} <= set(names)
+              assert z.testzip() is None
+              sheets = [s.attrib['name'] for s in ET.fromstring(z.read('xl/workbook.xml')).findall('x:sheets/x:sheet',ns)]
+              assert sheets
+          report = {'source':url,'final_url':final_url,'retrieved_at_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'http_status':200,'mime':mime,'bytes':size,'sha256':sha.hexdigest(),'zip_crc':'PASS','zip_entries':len(names),'sheets':sheets,'reference_hash_match':sha.hexdigest()=='0838c7545d4ad5a90a0576e1044284bfd67fcff4d330e00aae45b98a625a289c','status':'CAPTURE_ONLY','F02-03':'NO_ACREDITAT','production':'NO_GO'}
+          (target / 'transport_report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps(report,ensure_ascii=False))
+          PY
+      - name: Optional custody artifact
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.storage_budget_confirmed == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: eurostat-lau-2024-capture
+          path: capture/
+          retention-days: 1
+          if-no-files-found: error
