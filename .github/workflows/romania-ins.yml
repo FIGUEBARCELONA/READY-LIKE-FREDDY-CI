@@ -1,0 +1,68 @@
+name: Romania official SIRUTA and census archive
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/romania-ins.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Capture references
+        run: |
+          python3 - <<'PY'
+          import urllib.request, urllib.parse, pathlib, hashlib, json, concurrent.futures, zipfile, io, base64
+          out=pathlib.Path('references');out.mkdir()
+          def get(url,hosts,limit=16*1024*1024):
+              with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 statistical reference'}),timeout=20) as r:
+                  final=r.geturl();u=urllib.parse.urlsplit(final)
+                  assert r.status==200 and u.scheme=='https' and u.hostname in hosts
+                  b=r.read(limit+1);assert 0<len(b)<=limit
+              return b,final
+          def save(name,url,b,final):
+              (out/name).write_bytes(b)
+              return {'name':name,'url':url,'final_url':final,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b)}
+          def registry():
+              url='https://data.gov.ro/api/3/action/package_show?id=9b68363c-55ac-418d-985e-9bb4746b9a67'
+              b,final=get(url,{'data.gov.ro','www.data.gov.ro'});data=json.loads(b);assert data['success']
+              result=data['result'];print('REGISTRY',result['title'],result.get('license_title'),[(x['name'],x['url']) for x in result['resources']])
+              rows=[save('siruta_catalogue.json',url,b,final)]
+              for x in result['resources']:
+                  if x['format'].lower() not in ('csv','xml'):continue
+                  u=x['url'];assert urllib.parse.urlsplit(u).scheme=='https'
+                  data,final=get(u,{'data.gov.ro','www.data.gov.ro'})
+                  rows.append(save('siruta2024.'+x['format'].lower(),u,data,final))
+              return rows
+          def archive():
+              source='https://www.recensamantromania.ro/wp-content/uploads/2023/05/Tabel-1.22.xlsx'
+              u='https://web.archive.org/cdx/search/cdx?'+urllib.parse.urlencode({'url':source,'output':'json','filter':'statuscode:200','from':'2023','to':'2026'})
+              b,final=get(u,{'web.archive.org'},512*1024);data=json.loads(b);print('CDX',data[:15])
+              rows=[save('archive_index.json',u,b,final)]
+              for item in data[1:4]:
+                  if len(item)<7:continue
+                  ts,original,digest=item[1],item[2],item[5]
+                  u='https://web.archive.org/web/'+ts+'id_/'+original
+                  try:
+                      b,final=get(u,{'web.archive.org'})
+                      assert ts in final and base64.b32encode(hashlib.sha1(b).digest()).decode()==digest
+                      with zipfile.ZipFile(io.BytesIO(b)) as z:assert z.testzip() is None and 'xl/workbook.xml' in z.namelist()
+                      rows.append(save('census_1_22_archived.xlsx',u,b,final));break
+                  except Exception as e:print('ARCHIVE_HOLD',repr(e))
+              return rows
+          report=[]
+          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+              for fn,f in [(fn,ex.submit(fn)) for fn in (registry,archive)]:
+                  try:report.extend(f.result())
+                  except Exception as e:report.append({'source':fn.__name__,'error':repr(e)})
+          print(json.dumps(report));(out/'capture_report.json').write_text(json.dumps(report,indent=2)+'\n')
+          assert any('sha256' in x for x in report)
+          PY
+      - name: Transfer reference
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: romania-ins-alternate-reference
+          path: references/
+          retention-days: 1
+          if-no-files-found: error
