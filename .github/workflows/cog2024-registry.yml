@@ -1,0 +1,42 @@
+name: French 2024 geography and Greek 2025 gazette
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/cog2024-registry.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Capture documented source files
+        run: |
+          python3 - <<'PY'
+          import urllib.request, urllib.parse, pathlib, hashlib, zipfile, json, datetime
+          out=pathlib.Path('references');out.mkdir()
+          sources=[('cog2024.zip','https://www.insee.fr/fr/statistiques/fichier/7766585/cog_ensemble_2024_csv.zip','www.insee.fr',b'PK'),('passage2024.zip','https://www.insee.fr/fr/statistiques/fichier/7671867/table_passage_annuelle_2024.zip','www.insee.fr',b'PK'),('fek6293_2025_mirror.pdf','https://nomotelia.gr/photos/File/6293b-25.pdf','nomotelia.gr',b'%PDF')]
+          report=[]
+          for name,url,host,magic in sources:
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 statistical reference'}),timeout=35) as r:
+                      final=r.geturl();assert r.status==200 and urllib.parse.urlsplit(final).scheme=='https' and urllib.parse.urlsplit(final).hostname==host
+                      b=r.read(30*1024*1024+1);assert 0<len(b)<=30*1024*1024 and b.startswith(magic)
+                  p=out/name;p.write_bytes(b)
+                  row={'filename':name,'url':url,'final_url':final,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+                  if name.endswith('.zip'):
+                      with zipfile.ZipFile(p) as z:
+                          assert len(set(z.namelist()))==len(z.namelist()) and sum(i.file_size for i in z.infolist())<=150*1024*1024 and z.testzip() is None
+                          row['entries']=z.namelist()
+                  report.append(row);print(json.dumps(row))
+              except Exception as e: report.append({'filename':name,'url':url,'error':repr(e)});print('HOLD',name,repr(e))
+          (out/'capture_report.json').write_text(json.dumps(report,indent=2)+'\n')
+          assert any('sha256' in x for x in report)
+          PY
+      - name: Transfer public reference files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cog2024-registry
+          path: references/
+          retention-days: 1
+          if-no-files-found: error
