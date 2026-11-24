@@ -1,0 +1,34 @@
+name: F02-03 Vrancea original custody
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/f02-03-vrancea.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,json,concurrent.futures
+          p=pathlib.Path('reference');p.mkdir()
+          sources={'vrancea_order134.pdf':'https://vn.prefectura.mai.gov.ro/wp-content/uploads/sites/14/2024/04/Ordin-134-2024-nr-consilieri.pdf','brasov_pug.pdf':'https://www.brasovcity.ro/file-zone/urbanism/pug/consultare/1.%20Piese%20scrise/2.1.1_Memoriu%20general.pdf'}
+          def get(item):
+              n,u=item
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 public statistical reference'}),timeout=25) as r:
+                      f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in {'vn.prefectura.mai.gov.ro','www.brasovcity.ro','brasovcity.ro'}
+                      b=r.read(32*1024*1024+1);assert 0<len(b)<=32*1024*1024 and b.startswith(b'%PDF')
+                  (p/n).write_bytes(b);return {'name':n,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()}
+              except Exception as e:return {'name':n,'url':u,'error':repr(e)}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:report=list(ex.map(get,sources.items()))
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(report)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vrancea-prefecture-custody
+          path: reference/
+          retention-days: 1
+          if-no-files-found: error
