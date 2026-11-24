@@ -1,0 +1,39 @@
+name: F02-03 Malta NSO and Neamt historical population
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/mt-nso-ro-neamt.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime,concurrent.futures,zipfile,io
+          p=pathlib.Path('reference');p.mkdir();report=[]
+          def get(name,u,hosts):
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 public statistical reference'}),timeout=25) as r:
+                      f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in hosts
+                      b=r.read(24*1024*1024+1);assert 0<len(b)<=24*1024*1024
+                  if name.endswith('.xlsx'):
+                      with zipfile.ZipFile(io.BytesIO(b)) as z:assert 'xl/workbook.xml' in z.namelist() and z.testzip() is None
+                  elif name.endswith('.pdf'):assert b.startswith(b'%PDF')
+                  (p/name).write_bytes(b);report.append({'name':name,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()})
+              except Exception as e:report.append({'name_attempted':name,'url':u,'error':repr(e)})
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+              fs=[ex.submit(get,'malta_pq24367.pdf','https://parlament.mt/media/131979/pq24367.pdf',{'parlament.mt','www.parlament.mt'}),ex.submit(get,'malta_gazette1326.pdf','https://www.gov.mt/en/Government/DOI/Government%20Gazette/Government%20Notices/PublishingImages/Pages/2024/10/GovNotices0810/LC%20Population%202024%20Gaz%208.10.pdf',{'gov.mt','www.gov.mt'})]
+              for f in fs:f.result()
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
+          assert (p/'malta_pq24367.pdf').exists() and (p/'malta_gazette1326.pdf').exists()
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mt-nso-ro-neamt
+          path: reference/
+          retention-days: 1
+          if-no-files-found: error
