@@ -1,0 +1,40 @@
+name: DZS 2021 census primary tables
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/hr-cy-ro.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Capture DZS original census tables
+        run: |
+          python3 - <<'PY'
+          import urllib.request, urllib.parse, pathlib, hashlib, json, zipfile, io, concurrent.futures, datetime
+          p=pathlib.Path('reference');p.mkdir()
+          sources=[('dzs_municipal.xlsx','https://podaci.dzs.hr/media/td3jvrbu/popis_2021-stanovnistvo_po_gradovima_opcinama.xlsx'),('dzs_settlements.xlsx','https://podaci.dzs.hr/media/rqybclnx/popis_2021-stanovnistvo_po_naseljima.xlsx')]
+          def fetch(x):
+              name,u=x
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 statistical reference'}),timeout=30) as r:
+                      f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname=='podaci.dzs.hr'
+                      b=r.read(30*1024*1024+1);assert 0<len(b)<=30*1024*1024
+                  with zipfile.ZipFile(io.BytesIO(b)) as z:
+                      assert z.testzip() is None and len(set(z.namelist()))==len(z.namelist()) and sum(i.file_size for i in z.infolist())<=200*1024*1024 and 'xl/workbook.xml' in z.namelist()
+                  (p/name).write_bytes(b)
+                  return {'name':name,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+              except Exception as e:return {'name':name,'url':u,'error':repr(e)}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:report=list(ex.map(fetch,sources))
+          print(report);(p/'capture_report.json').write_text(json.dumps(report,indent=2))
+          assert any('sha256' in x for x in report)
+          PY
+      - name: Transfer originals
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dzs-2021-reference
+          path: reference/
+          retention-days: 1
+          if-no-files-found: error
