@@ -15,7 +15,7 @@ jobs:
           python3 - <<'PY'
           import urllib.request, urllib.parse, pathlib, hashlib, zipfile, io, json, concurrent.futures
           out=pathlib.Path('references');out.mkdir()
-          sources=[('ksh_2024.xlsx','https://www.ksh.hu/docs/helysegnevtar/hnt_letoltes_2024.xlsx',{'www.ksh.hu','ksh.hu','www.ksh.gov.hu','ksh.gov.hu'}),('ro_nuts_ted.html','https://docs.ted.europa.eu/eforms/1.15/reference/code-lists/nuts-rou-lvl3.html',{'docs.ted.europa.eu'}),('tempo_index.json','https://web.archive.org/cdx/search/cdx?url=statistici.insse.ro%3A8077%2Ftempo-ins%2Fmatrix%2FPOP107D&from=2024&to=2025&output=json&filter=statuscode%3A200',{'web.archive.org'})]
+          sources=[('ro_bn_2024_provisional.xlsx','https://bistrita.insse.ro/wp-content/uploads/2024/04/anexa_comunicat.xlsx',{'bistrita.insse.ro'}),('ksh_2024.xlsx','https://www.ksh.hu/docs/helysegnevtar/hnt_letoltes_2024.xlsx',{'www.ksh.hu','ksh.hu','www.ksh.gov.hu','ksh.gov.hu'}),('ro_nuts_ted.html','https://docs.ted.europa.eu/eforms/1.15/reference/code-lists/nuts-rou-lvl3.html',{'docs.ted.europa.eu'}),('tempo_index.json','https://web.archive.org/cdx/search/cdx?url=statistici.insse.ro%3A8077%2Ftempo-ins%2Fmatrix%2FPOP107D&from=2024&to=2025&output=json&filter=statuscode%3A200',{'web.archive.org'})]
           def fetch(x):
               name,url,hosts=x
               try:
@@ -36,7 +36,7 @@ jobs:
       - name: Transfer evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: hu-ksh-ro-nuts-reference
+          name: hu-ksh-ro-nuts-bn-reference
           path: references/
           retention-days: 1
           if-no-files-found: error
