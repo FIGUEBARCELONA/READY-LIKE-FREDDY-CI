@@ -1,0 +1,38 @@
+name: CZSO 2024 municipal primary reference
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/czso-2024.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Capture official municipal table
+        run: |
+          python3 - <<'PY'
+          import urllib.request, urllib.parse, pathlib, hashlib, zipfile, json, datetime
+          out=pathlib.Path('references');out.mkdir()
+          urls={'czso_municipalities.xlsx':'https://csu.gov.cz/docs/107508/9227de42-cb13-60d8-64a9-f1745cb3b08b/1300722403.xlsx?version=1.0','czso_publication.zip':'https://csu.gov.cz/docs/107508/54ee4cd2-41cd-ca21-02f1-b1e493bd05e9/13007224_data.zip?version=1.0'}
+          report=[]
+          for name,url in urls.items():
+              with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 statistical reference'}),timeout=45) as r:
+                  final=r.geturl();assert r.status==200 and urllib.parse.urlsplit(final).scheme=='https' and urllib.parse.urlsplit(final).hostname in ('csu.gov.cz','www.csu.gov.cz')
+                  b=r.read(8*1024*1024+1);assert 0<len(b)<=8*1024*1024 and b.startswith(b'PK')
+              p=out/name;p.write_bytes(b)
+              with zipfile.ZipFile(p) as z:
+                  assert z.testzip() is None and len(set(z.namelist()))==len(z.namelist()) and sum(i.file_size for i in z.infolist())<100*1024*1024
+                  names=z.namelist()
+                  if name.endswith('.xlsx'): assert 'xl/workbook.xml' in names
+              row={'filename':name,'url':url,'final_url':final,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'entries':names};report.append(row);print(json.dumps(row))
+          (out/'capture_report.json').write_text(json.dumps(report,indent=2)+'\n')
+          PY
+      - name: Transfer official source
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: czso-2024-reference
+          path: references/
+          retention-days: 1
+          if-no-files-found: error
