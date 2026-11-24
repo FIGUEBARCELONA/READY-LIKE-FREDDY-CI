@@ -24,9 +24,13 @@ jobs:
               elif name.endswith('.pdf'):assert b.startswith(b'%PDF')
               (p/name).write_bytes(b);report.append({'name':name,'url':u,'final_url':f,'body':body,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()});return b
           def ee():
-              u='https://andmed.stat.ee/api/v1/en/stat/rahvastik__rahvastikunaitajad-ja-koosseis__rahvaarv-ja-rahvastiku-koosseis/RV0291U.px'
+              u='https://andmed.stat.ee/api/v1/en/stat/rahvastik/rahvastikunaitajad-ja-koosseis/rahvaarv-ja-rahvastiku-koosseis/RV0291U.px'
               h={'andmed.stat.ee'}
-              m=json.loads(get('rv0291u_metadata.json',u,h))
+              for candidate in [u,u.removesuffix('.px'),'https://andmed.stat.ee/api/v1/en/stat/RV0291U']:
+                  try:
+                      m=json.loads(get('rv0291u_metadata.json',candidate,h));u=candidate;break
+                  except Exception as e:report.append({'attempt':candidate,'error':repr(e)})
+              else:raise RuntimeError('No metadata endpoint')
               q=[]
               for v in m['variables']:
                   vals=v['values'];pick=['2024'] if '2024' in vals else vals
@@ -36,7 +40,7 @@ jobs:
               get('harghita_cnp.pdf','https://cnp.ro/wp-content/uploads/2025/05/Economia-judetului-Harghita.pdf',{'cnp.ro','www.cnp.ro'})
               get('arges_cnp.pdf','https://cnp.ro/wp-content/uploads/2025/05/Economia-judetului-Arges.pdf',{'cnp.ro','www.cn p.ro'.replace(' ','')})
           with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-              for f in [ex.submit(ee),ex.submit(ro)]:
+              for f in [ex.submit(ee)]:
                   try:f.result()
                   except Exception as e:report.append({'error':repr(e)})
           (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
