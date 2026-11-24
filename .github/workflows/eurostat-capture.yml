@@ -66,11 +66,49 @@ jobs:
           (target / 'transport_report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
           print(json.dumps(report,ensure_ascii=False))
           PY
-      - name: Optional custody artifact
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.storage_budget_confirmed == true }}
-        uses: actions/upload-artifact@v4
+      - name: Encrypt original for restricted custody
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'qa/f02-03-eurostat-capture' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum capture/EU-27-LAU-2024-NUTS-2024.xlsx | cut -d' ' -f1)" = 0838c7545d4ad5a90a0576e1044284bfd67fcff4d330e00aae45b98a625a289c
+          mkdir -p encrypted-custody
+          cat > "$RUNNER_TEMP/rlf-recipient.crt" <<'CERT'
+          -----BEGIN CERTIFICATE-----
+          MIIESTCCArGgAwIBAgIUMUoGKZ7ej2lhpgcm4pk+tQ9jiFAwDQYJKoZIhvcNAQEL
+          BQAwNDEyMDAGA1UEAwwpUkxGIEYwMi0wMyBlcGhlbWVyYWwgdHJhbnNwb3J0IGVu
+          Y3J5cHRpb24wHhcNMjYxMTI0MDczNjE0WhcNMjYxMjAxMDczNjE0WjA0MTIwMAYD
+          VQQDDClSTEYgRjAyLTAzIGVwaGVtZXJhbCB0cmFuc3BvcnQgZW5jcnlwdGlvbjCC
+          AaIwDQYJKoZIhvcNAQEBBQADggGPADCCAYoCggGBAOMW++LYGz//vFJ558a1+/ff
+          c/1MHCzUH7woAlqzabtLP9xaeGEoI5PX6XnnD/cc42eKnUOiw26unL62Up+wtpRO
+          XfEkqp0ErzKSIz6GTGKeYUsy+h6d/yZzobYanuBtW0naCkCVF1elGu5+CBh5+df/
+          0sEkz2pFn+ynA7Sh2Tz1JPYhikk3t8QqmsmrMM4c/ZiwCPc3REuFCRvSJSh2ErKU
+          RBSuLIyoUnKx14AUUxTyQQWuxeB7K/agx3BEBaf5GCCRfXZnHN7quKa3BXVG3WfD
+          nwlcN/SVDcDV8wa4ejxSzBYJlJ1DdD5n4/bg/CK6F5sm54+aQvnUjSty/LwH5k2N
+          Jd8yHRq5GVRqHroc+mEC0AO7vsTcaYaNBUiT8oUb7eX5aYS/Hs+c9SdETMBonrF5
+          IpcUKG+BMDBZk6boiEzDwTFkH97Ur2VGAw+4Lcu3F4AED++ur5y9kdLDZhLoeutM
+          4xuujSKbNr8hOZWewLkFcWoFxg88C0j5dWlbvfdrYwIDAQABo1MwUTAdBgNVHQ4E
+          FgQUKhyTgb0ZBDrfjs8LT6beQySLoswwHwYDVR0jBBgwFoAUKhyTgb0ZBDrfjs8L
+          T6beQySLoswwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAYEA1Jmv
+          IelDRXSi9vZy4cYrcl9bwtp7qBU+CMJRdACmr7uHHhcvXXjIILLaE4uMzNLKxy21
+          sxjP/PJq2tv4VqLyMBnl9vqbT/xTFLd/UjLqYjq4shM9ibs7bfi/IfN4vEPt+7Ez
+          Bn2j4Rldgva0NwV87hmKKq2yvoZS/fzYq+V3mgG8RyF102KgRq03tJZQ4bJ+vKEA
+          2EItbRzsxwFDimKIpMWc2OUIT0M6yHpyQVMlE3oBGHczLvY77oNdRefypWkeqFVx
+          RRnZ4VccMFRSgvjutoANdWi0j/sAv6czhwEurzmq7MuUT/CUCRDSRnY4oGhn/TmU
+          dwrUpO5rcyEMHyQhRrUdscls2O+DaoSW20omVsPbo17pNLNZvYE8Sp9Cfw4L3gWn
+          /NOyYypLgRJqaWtpLuK/V9QtctQeDMExo4VtiBzc06BX7DQ9odFFxKXGYDQtETWL
+          Q8nyOE4BPQrBKJ6r7YVN30PPVV4Nr1+w6UO1UVFDKHVEy2PGv0tqr+eKwMDP
+          -----END CERTIFICATE-----
+          CERT
+          openssl cms -encrypt -binary -aes-256-gcm -in capture/EU-27-LAU-2024-NUTS-2024.xlsx -outform DER -out encrypted-custody/original.xlsx.cms "$RUNNER_TEMP/rlf-recipient.crt"
+          cp capture/transport_report.json encrypted-custody/
+          sha256sum encrypted-custody/original.xlsx.cms
+      - name: Transfer encrypted custody
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'qa/f02-03-eurostat-capture' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: eurostat-lau-2024-capture
-          path: capture/
+          name: eurostat-lau-2024-encrypted-custody
+          path: encrypted-custody/
           retention-days: 1
+          compression-level: 0
           if-no-files-found: error
