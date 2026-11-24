@@ -1,4 +1,4 @@
-name: F02-03 Ireland CSO 2022 and Satu Mare historical publication
+name: F02-03 Sălaj historical prefectural order
 on:
   pull_request:
     branches: [main]
@@ -8,34 +8,22 @@ permissions:
 jobs:
   capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 2
     steps:
-      - name: Capture published public statistical files
-        run: |
+      - run: |
           python3 - <<'PY'
-          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime,concurrent.futures
-          p=pathlib.Path('reference');p.mkdir();report=[]
-          def get(name,u,hosts,kind):
-              try:
-                  with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 statistical research'}),timeout=30) as r:
-                      f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in hosts
-                      b=r.read(32*1024*1024+1);assert 0<len(b)<=32*1024*1024
-                  if kind=='json':json.loads(b)
-                  elif kind=='pdf':assert b.startswith(b'%PDF')
-                  elif kind=='csv':assert b.count(b',')>1000 and not b.lstrip().startswith(b'<')
-                  (p/name).write_bytes(b);report.append({'name':name,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()})
-              except Exception as e:report.append({'url':u,'error':repr(e)})
-          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
-              fs=[ex.submit(get,'saps_lea.csv','https://www.cso.ie/en/media/csoie/census/census2022/SAPS_2022_CSOLEA270923.csv',{'www.cso.ie','cso.ie'},'csv'),ex.submit(get,'fy108.json','https://ws.cso.ie/public/api.restful/PxStat.Data.Cube_API.ReadDataset/FY108/JSON-stat/2.0/en',{'ws.cso.ie'},'json'),ex.submit(get,'satu_mare_20240410.pdf','https://informatia-zilei.ro/wp-content/uploads/2024/04/Ziar-10.04.2024.pdf',{'informatia-zilei.ro','www.informatia-zilei.ro'},'pdf'),ex.submit(get,'satu_mare_press.html','https://www.presasm.ro/alegeri-locale-la-satu-mare-2024-consilieri-locali/39923',{'www.presasm.ro','presasm.ro'},'html')]
-              for f in fs:f.result()
-          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
-          assert (p/'saps_lea.csv').exists() or (p/'fy108.json').exists()
+          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime
+          p=pathlib.Path('reference');p.mkdir()
+          u='https://www.simleusilvaniei.ro/wp-content/uploads/2024/04/Ordinul-nr.125.pdf'
+          with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 statistical research'}),timeout=30) as r:
+              f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in {'www.simleusilvaniei.ro','simleusilvaniei.ro'}
+              b=r.read(20*1024*1024+1);assert b.startswith(b'%PDF') and len(b)<=20*1024*1024
+          (p/'salaj_order.pdf').write_bytes(b)
+          (p/'capture_report.json').write_text(json.dumps({'name':'salaj_order.pdf','url':u,'final_url':f,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()},indent=2))
           PY
-      - name: Custody transfer
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ie-cso-ro-satu-mare
+          name: salaj-order
           path: reference/
           retention-days: 1
           if-no-files-found: error
