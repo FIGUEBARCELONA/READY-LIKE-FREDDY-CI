@@ -1,0 +1,60 @@
+name: F02-03 Swedish SCB historical population and Romanian regional publications
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/se-scb-ro-bn-ph.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Capture primary statistical references
+        run: |
+          python3 - <<'PY'
+          import urllib.request, urllib.parse, pathlib, hashlib, json, datetime, concurrent.futures, re
+          p=pathlib.Path('reference');p.mkdir();report=[]
+          def get(name,u,hosts,body=None,kind='json'):
+              headers={'User-Agent':'RLF-CI/1.0 public statistical reference'}
+              if body is not None:headers['Content-Type']='application/json'
+              with urllib.request.urlopen(urllib.request.Request(u,data=None if body is None else json.dumps(body).encode(),headers=headers),timeout=25) as r:
+                  f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in hosts
+                  b=r.read(25*1024*1024+1);assert 0<len(b)<=25*1024*1024
+              if kind=='json':json.loads(b)
+              elif kind=='pdf':assert b.startswith(b'%PDF')
+              elif kind=='xlsx':assert b.startswith(b'PK')
+              (p/name).write_bytes(b);report.append({'name':name,'url':u,'final_url':f,'request':body,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()})
+              return b
+          def sweden():
+              for root in ['https://api.scb.se/OV0104/v1/doris/en/ssd/START/BE/BE0101/BE0101A/','https://api.scb.se/OV0104/v1/doris/en/ssd/BE/BE0101/BE0101A/','https://api.scb.se/OV0104/v1/doris/sv/ssd/START/BE/BE0101/BE0101A/']:
+                  try:
+                      u=root+'BefolkningNy';m=json.loads(get('scb_metadata.json',u,{'api.scb.se'}));q=[]
+                      for v in m['variables']:
+                          c=v['code'];vv=v['values'];ll=v['valueTexts']
+                          if c=='Region':pick=[x for x in vv if re.fullmatch('[0-9]{4}',x)];assert len(pick)==290
+                          elif c=='Alder':pick=['tot'] if 'tot' in vv else [x for x,l in zip(vv,ll) if l.lower() in ('total','all ages','totalt','samtliga åldrar')]
+                          elif c=='Kon':pick=['1','2']
+                          elif c=='ContentsCode':pick=['BE0101N1']
+                          elif c=='Tid':pick=['2023']
+                          else:raise ValueError(c)
+                          assert pick and all(x in vv for x in pick),(c,pick,ll[:5])
+                          q.append({'code':c,'selection':{'filter':'item','values':pick}})
+                      d=json.loads(get('scb_2023.json',u,{'api.scb.se'}, {'query':q,'response':{'format':'json'}}));assert len(d['data'])==580
+                      return
+                  except Exception as e:report.append({'url':root,'error':repr(e)})
+          def ro(name,u,hosts,kind):
+              try:get(name,u,hosts,kind=kind)
+              except Exception as e:report.append({'url':u,'error':repr(e)})
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+              fs=[ex.submit(sweden),ex.submit(ro,'bn_original.xlsx','https://bistrita.insse.ro/wp-content/uploads/2024/04/anexa_comunicat.xlsx',{'bistrita.insse.ro'},'xlsx'),ex.submit(ro,'bn_mirror.pdf','https://timponline.ro/wp-content/uploads/2024/04/populatia-dupa-domiciliu.pdf',{'timponline.ro','www.timponline.ro'},'pdf'),ex.submit(ro,'ph_mirror.pdf','https://cdn.observatorulph.ro/wp-content/uploads/2026/01/populatia-din-Prahova-pe-localitati.pdf',{'cdn.observatorulph.ro','observatorulph.ro','www.observatorulph.ro'},'pdf')]
+              for f in fs:f.result()
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
+          PY
+      - name: Custody transfer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: se-scb-ro-bn-ph
+          path: reference/
+          retention-days: 1
+          if-no-files-found: error
