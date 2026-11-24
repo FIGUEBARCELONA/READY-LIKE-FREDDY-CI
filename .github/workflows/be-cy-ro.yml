@@ -1,0 +1,54 @@
+name: CYSTAT final census official API
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/be-cy-ro.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Follow official API catalogue and query total population
+        run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,json
+          p=pathlib.Path('references');p.mkdir()
+          root='https://cystatdb.cystat.gov.cy/api/v1/en/'
+          report=[]
+          def get(name,u,body=None):
+              with urllib.request.urlopen(urllib.request.Request(u,data=body,headers={'User-Agent':'Mozilla/5.0','Content-Type':'application/json','Accept':'application/json'}),timeout=20) as r:
+                  f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).hostname=='cystatdb.cystat.gov.cy' and urllib.parse.urlsplit(f).scheme=='https'
+                  b=r.read(12*1024*1024+1);assert 0<len(b)<=12*1024*1024
+              d=json.loads(b)
+              (p/name).write_bytes(b);report.append({'name':name,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()});return d
+          try:
+              d=get('catalogue_0.json',root);assert any(x.get('dbid')=='8.CYSTAT-DB' for x in d)
+              u=root+'8.CYSTAT-DB/'
+              for i,label in enumerate(['Population','Census of Population and Housing 2021','Population','Population - Place of Residence','1891114E.px'],1):
+                  d=get('catalogue_'+str(i)+'.json',u);print('CATALOGUE',i,str(d)[:4500])
+                  matches=[x for x in d if x.get('id')==label or x.get('text')==label or (label.endswith('.px') and x.get('id','').lower()==label.lower())]
+                  assert len(matches)==1,(label,matches)
+                  u+=urllib.parse.quote(matches[0]['id'],safe='')+('' if label.endswith('.px') else '/')
+              d=get('final_metadata.json',u);print('VARIABLES',[(v['code'],v['text'],len(v['values']),v['values'][:5]) for v in d['variables']])
+              variables=d['variables'];assert len(variables)==3
+              geo=[v for v in variables if 'district' in v['text'].lower()][0]
+              query=[]
+              for v in variables:
+                  values=v['values'] if v==geo else [k for k,t in zip(v['values'],v['valueTexts']) if t.lower()=='total']
+                  assert values and (v==geo or len(values)==1)
+                  query.append({'code':v['code'],'selection':{'filter':'item','values':values}})
+              req={'query':query,'response':{'format':'json-stat2'}}
+              (p/'query.json').write_text(json.dumps(req))
+              data=get('final_population.json',u,json.dumps(req).encode());print('RESULT',str(data)[:500])
+          except Exception as e:report.append({'error':repr(e)});print('HOLD',repr(e))
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2))
+          PY
+      - name: Transfer official responses
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cy-final-official-api
+          path: references/
+          retention-days: 1
+          if-no-files-found: error
