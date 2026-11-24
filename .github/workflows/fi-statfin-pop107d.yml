@@ -1,4 +1,4 @@
-name: F02-03 Finland historical population and Romania source recovery
+name: F02-03 Preserve Ilfov municipal strategy POP107D excerpt
 on:
   pull_request:
     branches: [main]
@@ -8,59 +8,25 @@ permissions:
 jobs:
   capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 3
     steps:
-      - name: Capture official data and metadata
+      - name: Capture original public municipal strategy
         run: |
           python3 - <<'PY'
-          import urllib.request, urllib.parse, pathlib, hashlib, json, datetime, concurrent.futures
-          p=pathlib.Path('reference');p.mkdir();report=[]
-          def get(name,u,body=None):
-              headers={'User-Agent':'RLF-CI/1.0 statistical reference'}
-              if body is not None: headers['Content-Type']='application/json'
-              req=urllib.request.Request(u,data=None if body is None else json.dumps(body).encode(),headers=headers)
-              with urllib.request.urlopen(req,timeout=25) as r:
-                  f=r.geturl(); assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https'
-                  assert urllib.parse.urlsplit(f).hostname in {'pxdata.stat.fi','statfin.stat.fi','pxweb2.stat.fi','statistici.insse.ro','www.insse.ro','insse.ro'}
-                  b=r.read(20*1024*1024+1);assert 0<len(b)<=20*1024*1024
-              (p/name).write_bytes(b)
-              report.append({'name':name,'url':u,'final_url':f,'request':body,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()})
-              return b
-          def fin():
-              for t in ['11rf','11ra']:
-                  for base in ['https://pxdata.stat.fi/PxWeb/api/v1/en/StatFin/vaerak/','https://statfin.stat.fi/PxWeb/api/v1/en/StatFin/vaerak/']:
-                      try:
-                          u=base+t+'.px'
-                          m=json.loads(get(t+'_metadata.json',u))
-                          q=[]
-                          for v in m['variables']:
-                              code=v['code'];text=v['text'].lower();values=v['values'];labels=v['valueTexts']
-                              if 'year' in text: pick=['2023']
-                              elif 'municipality' in text or 'area' in text or 'region' in text: pick=[x for x in values if x.startswith('KU') and len(x)==5]
-                              elif 'information' in text: pick=[x for x,l in zip(values,labels) if 'population 31 dec' in l.lower() or l.lower()=='population 31.12.']
-                              else: pick=[x for x,l in zip(values,labels) if l.lower() in ('total','both sexes','all ages')];pick=pick or (['SSS'] if 'SSS' in values else [])
-                              assert pick and all(x in values for x in pick),(code,text,labels[:10])
-                              q.append({'code':code,'selection':{'filter':'item','values':pick}})
-                          d=json.loads(get(t+'_2023.json',u,{'query':q,'response':{'format':'json'}}))
-                          assert 'data' in d
-                          print('FIN',t,'ROWS',len(d['data']),'COLUMNS',d['columns'])
-                          break
-                      except Exception as e:report.append({'table':t,'url':base,'error':repr(e)})
-          def rom():
-              u='https://statistici.insse.ro:8077/tempo-ins/matrix/POP107D'
-              try:get('pop107d_matrix.html',u)
-              except Exception as e:report.append({'url':u,'error':repr(e)})
-          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-              for fn in [ex.submit(fin),ex.submit(rom)]:
-                  try:fn.result()
-                  except Exception as e:report.append({'error':repr(e)})
-          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
-          assert any((p/(t+'_2023.json')).exists() for t in ['11rf','11ra'])
+          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime
+          p=pathlib.Path('reference');p.mkdir()
+          u='https://primariabuftea.ro/pdf/strategie_2024.pdf'
+          with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 statistical reference'}),timeout=35) as r:
+              f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in {'primariabuftea.ro','www.primariabuftea.ro'}
+              b=r.read(64*1024*1024+1);assert b.startswith(b'%PDF') and len(b)<=64*1024*1024
+          (p/'strategie_2024.pdf').write_bytes(b)
+          d={'name':'strategie_2024.pdf','url':u,'final_url':f,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'status':'MUNICIPAL_CONSULTATION_DOCUMENT_NOT_RAW_INS'}
+          (p/'capture_report.json').write_text(json.dumps(d,indent=2));print(d)
           PY
       - name: Custody transfer
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: fi-statfin-pop107d
+          name: ro-ilfov-pop107d
           path: reference/
           retention-days: 1
           if-no-files-found: error
