@@ -1,0 +1,39 @@
+name: F02-03 Malta NSO and Neamt historical population
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/mt-nso-ro-neamt.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime,concurrent.futures,zipfile,io
+          p=pathlib.Path('reference');p.mkdir();report=[]
+          def get(name,u,hosts):
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 public statistical reference'}),timeout=25) as r:
+                      f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in hosts
+                      b=r.read(24*1024*1024+1);assert 0<len(b)<=24*1024*1024
+                  if name.endswith('.xlsx'):
+                      with zipfile.ZipFile(io.BytesIO(b)) as z:assert 'xl/workbook.xml' in z.namelist() and z.testzip() is None
+                  elif name.endswith('.pdf'):assert b.startswith(b'%PDF')
+                  (p/name).write_bytes(b);report.append({'name':name,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()})
+              except Exception as e:report.append({'name_attempted':name,'url':u,'error':repr(e)})
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+              fs=[ex.submit(get,'nso.xlsx','https://nso.gov.mt/wp-content/uploads/End-of-year-population-estimates-by-locality-sex-and-citzenship_2012-2025.xlsx',{'nso.gov.mt','www.nso.gov.mt'}),ex.submit(get,'neamt_annex.pdf','https://poianateiului.ro/wp-content/uploads/2025/12/3.ANEXA-ORD.PREFECT-CORFICIENTI-PRIMARIVICEPRIMARI.pdf',{'poianateiului.ro','www.poianateiului.ro'}),ex.submit(get,'neamt_order.pdf','https://nt.prefectura.mai.gov.ro/wp-content/uploads/sites/38/2024/04/OP-143-din-09.04.2024-nr-consilieri-locali.pdf',{'nt.prefectura.mai.gov.ro'})]
+              for f in fs:f.result()
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
+          assert (p/'nso.xlsx').exists() and (p/'neamt_annex.pdf').exists()
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mt-nso-ro-neamt
+          path: reference/
+          retention-days: 1
+          if-no-files-found: error
