@@ -14,12 +14,12 @@ jobs:
           python3 - <<'PY'
           import urllib.request,urllib.parse,pathlib,hashlib,json,concurrent.futures
           p=pathlib.Path('reference');p.mkdir()
-          sources={'fek_et.pdf':'https://www.et.gr/api/DownloadFeksApi/?fek_pdf=20230204821','fek_ministry.pdf':'https://www.ypes.gr/wp-content/uploads/2024/09/%CE%A5%CE%91-64436-20230731.pdf','brasov.pdf':'https://www.primaria-fagaras.ro/mb/hotarari/136_1.pdf'}
+          sources={'fek_mirror_dikaio.pdf':'https://www.dikaio.ai/prod-assets/fek/2023/02/04821.pdf','fek_mirror_kodiko.pdf':'https://www.kodiko.gr/nomologia/download_fek?f=fek%2F2023%2Fb%2Ffek_b_4821_2023.pdf&t=d6a69e336c9adde398473622ad4e41cc','fek_diavgeia.pdf':'https://diavgeia.gov.gr/doc/996%CE%9346%CE%9C%CE%A4%CE%9B6-3%CE%92%CE%92?inline=true'}
           def get(item):
               n,u=item
               try:
                   with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'RLF-CI/1.0 public statistical reference'}),timeout=25) as r:
-                      f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in {'www.et.gr','et.gr','search.et.gr','www.ypes.gr','ypes.gr','www.primaria-fagaras.ro','primaria-fagaras.ro'}
+                      f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in {'www.et.gr','et.gr','search.et.gr','www.ypes.gr','ypes.gr','www.primaria-fagaras.ro','primaria-fagaras.ro','www.dikaio.ai','dikaio.ai','www.kodiko.gr','kodiko.gr','diavgeia.gov.gr'}
                       b=r.read(32*1024*1024+1);assert 0<len(b)<=32*1024*1024 and b.startswith(b'%PDF')
                   (p/n).write_bytes(b);return {'name':n,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()}
               except Exception as e:return {'name':n,'url':u,'error':repr(e)}
@@ -28,7 +28,7 @@ jobs:
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: review-fek-brasov
+          name: fek-alternative-custody
           path: reference/
           retention-days: 1
           if-no-files-found: error
