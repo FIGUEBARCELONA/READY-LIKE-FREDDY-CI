@@ -1,0 +1,114 @@
+name: Eurostat LAU 2024 transport QA
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/eurostat-capture.yml']
+  workflow_dispatch:
+    inputs:
+      storage_budget_confirmed:
+        description: 'Zero-cost storage allowance and source redistribution terms confirmed'
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: eurostat-lau-2024-capture
+  cancel-in-progress: false
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Retrieve original and validate ZIP
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib, ssl, urllib.request, urllib.parse, zipfile, datetime
+          from xml.etree import ElementTree as ET
+          url = 'https://ec.europa.eu/eurostat/documents/345175/501971/EU-27-LAU-2024-NUTS-2024.xlsx/12971f56-c035-dbab-4d9f-ff1dcc617bb3?t=1737036272863'
+          target = pathlib.Path('capture')
+          target.mkdir(exist_ok=False)
+          path = target / 'EU-27-LAU-2024-NUTS-2024.xlsx'
+          class StrictRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  u = urllib.parse.urlsplit(newurl)
+                  if u.scheme != 'https' or u.hostname != 'ec.europa.eu' or u.path != urllib.parse.urlsplit(url).path or u.username or u.password or u.port not in (None,443):
+                      raise ValueError('Unexpected redirect')
+                  return super().redirect_request(req, fp, code, msg, headers, newurl)
+          opener = urllib.request.build_opener(StrictRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context()))
+          sha = hashlib.sha256()
+          size = 0
+          with opener.open(urllib.request.Request(url, headers={'User-Agent':'RLF-CI/1.0 source custody'}), timeout=60) as response, path.open('xb') as dest:
+              assert response.status == 200
+              mime = response.headers.get_content_type()
+              assert mime == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', mime
+              while chunk := response.read(1024 * 1024):
+                  size += len(chunk)
+                  assert size <= 80*1024*1024
+                  sha.update(chunk)
+                  dest.write(chunk)
+              if response.headers.get('Content-Length'):
+                  assert size == int(response.headers['Content-Length'])
+              final_url = response.geturl()
+          assert size > 0
+          ns = {'x':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+          with zipfile.ZipFile(path) as z:
+              infos = z.infolist()
+              names = z.namelist()
+              assert len(names) == len(set(names)) and len(names) <= 300
+              assert sum(i.file_size for i in infos) <= 500*1024*1024
+              assert {'[Content_Types].xml','_rels/.rels','xl/workbook.xml','xl/_rels/workbook.xml.rels'} <= set(names)
+              assert z.testzip() is None
+              sheets = [s.attrib['name'] for s in ET.fromstring(z.read('xl/workbook.xml')).findall('x:sheets/x:sheet',ns)]
+              assert sheets
+          report = {'source':url,'final_url':final_url,'retrieved_at_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'http_status':200,'mime':mime,'bytes':size,'sha256':sha.hexdigest(),'zip_crc':'PASS','zip_entries':len(names),'sheets':sheets,'reference_hash_match':sha.hexdigest()=='0838c7545d4ad5a90a0576e1044284bfd67fcff4d330e00aae45b98a625a289c','status':'CAPTURE_ONLY','F02-03':'NO_ACREDITAT','production':'NO_GO'}
+          (target / 'transport_report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps(report,ensure_ascii=False))
+          PY
+      - name: Encrypt original for restricted custody
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'qa/f02-03-eurostat-capture' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sha256sum capture/EU-27-LAU-2024-NUTS-2024.xlsx | cut -d' ' -f1)" = 0838c7545d4ad5a90a0576e1044284bfd67fcff4d330e00aae45b98a625a289c
+          mkdir -p encrypted-custody
+          cat > "$RUNNER_TEMP/rlf-recipient.crt" <<'CERT'
+          -----BEGIN CERTIFICATE-----
+          MIIESTCCArGgAwIBAgIUMUoGKZ7ej2lhpgcm4pk+tQ9jiFAwDQYJKoZIhvcNAQEL
+          BQAwNDEyMDAGA1UEAwwpUkxGIEYwMi0wMyBlcGhlbWVyYWwgdHJhbnNwb3J0IGVu
+          Y3J5cHRpb24wHhcNMjYxMTI0MDczNjE0WhcNMjYxMjAxMDczNjE0WjA0MTIwMAYD
+          VQQDDClSTEYgRjAyLTAzIGVwaGVtZXJhbCB0cmFuc3BvcnQgZW5jcnlwdGlvbjCC
+          AaIwDQYJKoZIhvcNAQEBBQADggGPADCCAYoCggGBAOMW++LYGz//vFJ558a1+/ff
+          c/1MHCzUH7woAlqzabtLP9xaeGEoI5PX6XnnD/cc42eKnUOiw26unL62Up+wtpRO
+          XfEkqp0ErzKSIz6GTGKeYUsy+h6d/yZzobYanuBtW0naCkCVF1elGu5+CBh5+df/
+          0sEkz2pFn+ynA7Sh2Tz1JPYhikk3t8QqmsmrMM4c/ZiwCPc3REuFCRvSJSh2ErKU
+          RBSuLIyoUnKx14AUUxTyQQWuxeB7K/agx3BEBaf5GCCRfXZnHN7quKa3BXVG3WfD
+          nwlcN/SVDcDV8wa4ejxSzBYJlJ1DdD5n4/bg/CK6F5sm54+aQvnUjSty/LwH5k2N
+          Jd8yHRq5GVRqHroc+mEC0AO7vsTcaYaNBUiT8oUb7eX5aYS/Hs+c9SdETMBonrF5
+          IpcUKG+BMDBZk6boiEzDwTFkH97Ur2VGAw+4Lcu3F4AED++ur5y9kdLDZhLoeutM
+          4xuujSKbNr8hOZWewLkFcWoFxg88C0j5dWlbvfdrYwIDAQABo1MwUTAdBgNVHQ4E
+          FgQUKhyTgb0ZBDrfjs8LT6beQySLoswwHwYDVR0jBBgwFoAUKhyTgb0ZBDrfjs8L
+          T6beQySLoswwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAYEA1Jmv
+          IelDRXSi9vZy4cYrcl9bwtp7qBU+CMJRdACmr7uHHhcvXXjIILLaE4uMzNLKxy21
+          sxjP/PJq2tv4VqLyMBnl9vqbT/xTFLd/UjLqYjq4shM9ibs7bfi/IfN4vEPt+7Ez
+          Bn2j4Rldgva0NwV87hmKKq2yvoZS/fzYq+V3mgG8RyF102KgRq03tJZQ4bJ+vKEA
+          2EItbRzsxwFDimKIpMWc2OUIT0M6yHpyQVMlE3oBGHczLvY77oNdRefypWkeqFVx
+          RRnZ4VccMFRSgvjutoANdWi0j/sAv6czhwEurzmq7MuUT/CUCRDSRnY4oGhn/TmU
+          dwrUpO5rcyEMHyQhRrUdscls2O+DaoSW20omVsPbo17pNLNZvYE8Sp9Cfw4L3gWn
+          /NOyYypLgRJqaWtpLuK/V9QtctQeDMExo4VtiBzc06BX7DQ9odFFxKXGYDQtETWL
+          Q8nyOE4BPQrBKJ6r7YVN30PPVV4Nr1+w6UO1UVFDKHVEy2PGv0tqr+eKwMDP
+          -----END CERTIFICATE-----
+          CERT
+          openssl cms -encrypt -binary -aes-256-gcm -in capture/EU-27-LAU-2024-NUTS-2024.xlsx -outform DER -out encrypted-custody/original.xlsx.cms "$RUNNER_TEMP/rlf-recipient.crt"
+          cp capture/transport_report.json encrypted-custody/
+          sha256sum encrypted-custody/original.xlsx.cms
+      - name: Transfer encrypted custody
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'qa/f02-03-eurostat-capture' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: eurostat-lau-2024-encrypted-custody
+          path: encrypted-custody/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
