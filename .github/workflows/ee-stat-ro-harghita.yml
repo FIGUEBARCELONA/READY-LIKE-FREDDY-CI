@@ -1,0 +1,51 @@
+name: F02-03 Estonia historical municipal statistics and Harghita
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/ee-stat-ro-harghita.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime,concurrent.futures
+          p=pathlib.Path('reference');p.mkdir();report=[]
+          def get(name,u,hosts,body=None):
+              h={'User-Agent':'RLF-CI/1.0 public statistical reference'}
+              if body is not None:h['Content-Type']='application/json'
+              with urllib.request.urlopen(urllib.request.Request(u,data=None if body is None else json.dumps(body).encode(),headers=h),timeout=25) as r:
+                  f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in hosts
+                  b=r.read(16*1024*1024+1);assert 0<len(b)<=16*1024*1024
+              if name.endswith('.json'):json.loads(b)
+              elif name.endswith('.pdf'):assert b.startswith(b'%PDF')
+              (p/name).write_bytes(b);report.append({'name':name,'url':u,'final_url':f,'body':body,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()});return b
+          def ee():
+              u='https://andmed.stat.ee/api/v1/en/stat/rahvastik__rahvastikunaitajad-ja-koosseis__rahvaarv-ja-rahvastiku-koosseis/RV0291U.px'
+              h={'andmed.stat.ee'}
+              m=json.loads(get('rv0291u_metadata.json',u,h))
+              q=[]
+              for v in m['variables']:
+                  vals=v['values'];pick=['2024'] if '2024' in vals else vals
+                  q.append({'code':v['code'],'selection':{'filter':'item','values':pick}})
+              get('rv0291u_2024.json',u,h,{'query':q,'response':{'format':'json'}})
+          def ro():
+              get('harghita_cnp.pdf','https://cnp.ro/wp-content/uploads/2025/05/Economia-judetului-Harghita.pdf',{'cnp.ro','www.cnp.ro'})
+              get('arges_cnp.pdf','https://cnp.ro/wp-content/uploads/2025/05/Economia-judetului-Arges.pdf',{'cnp.ro','www.cn p.ro'.replace(' ','')})
+          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+              for f in [ex.submit(ee),ex.submit(ro)]:
+                  try:f.result()
+                  except Exception as e:report.append({'error':repr(e)})
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report))
+          assert (p/'rv0291u_2024.json').exists()
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ee-stat-ro-harghita
+          path: reference/
+          retention-days: 1
+          if-no-files-found: error
