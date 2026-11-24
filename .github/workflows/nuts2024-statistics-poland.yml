@@ -1,0 +1,63 @@
+name: Independent NUTS 2024 official statistical list
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/nuts2024-statistics-poland.yml']
+permissions:
+  contents: read
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download official Statistics Poland classification
+        run: |
+          python3 - <<'PY'
+          import urllib.request, urllib.parse, pathlib, hashlib
+          url='https://stat.gov.pl/download/gfx/portalinformacyjny/en/defaultstronaopisowa/3725/1/1/nuts_ue_2024.xls'
+          p=pathlib.Path('reference');p.mkdir()
+          with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 statistical reference'}),timeout=60) as r:
+              b=r.read(8*1024*1024+1)
+              assert r.status==200 and urllib.parse.urlsplit(r.geturl()).scheme=='https' and urllib.parse.urlsplit(r.geturl()).hostname=='stat.gov.pl'
+              assert b[:8]==bytes.fromhex('d0cf11e0a1b11ae1') and len(b)<=8*1024*1024, (len(b),b[:8].hex())
+          (p/'nuts_ue_2024.xls').write_bytes(b)
+          print('SOURCE_SHA256',hashlib.sha256(b).hexdigest(),'BYTES',len(b))
+          PY
+      - name: Parse official table and validate independent totals
+        run: |
+          python3 -m venv /tmp/nuts-venv
+          /tmp/nuts-venv/bin/pip install --disable-pip-version-check --no-cache-dir xlrd==2.0.2
+          /tmp/nuts-venv/bin/python - <<'PY'
+          import xlrd, re, pathlib, collections, csv, json, hashlib, datetime
+          p=pathlib.Path('reference'); src=p/'nuts_ue_2024.xls'
+          expected=dict(zip('AT BE BG CY CZ DE DK EE EL ES FI FR HR HU IE IT LT LU LV MT NL PL PT RO SE SI SK'.split(),[35,44,28,1,14,400,11,5,52,59,19,101,21,20,8,107,10,1,5,2,40,73,26,42,21,12,8]))
+          wb=xlrd.open_workbook(str(src)); found=collections.defaultdict(list)
+          assert wb.sheet_names()==['NUTS 2024']
+          sh=wb.sheet_by_name('NUTS 2024')
+          assert sh.row_values(0)==['Kod NUTS\nNUTS code','Nazwa jednostki NUTS\nName of NUTS unit','Poziom NUTS\nNUTS level','Kod państwa\nCountry code']
+          for i in range(1,sh.nrows):
+              code,name,level,country=sh.row_values(i)
+              if level!=3: continue
+              code=code.strip(); country=country.strip()
+              assert re.fullmatch('[A-Z0-9]{5}',code) and code[:2]==country and country in expected and name.strip(), (i,code,country)
+              assert code not in found, code
+              found[code].append([sh.name,i+1,1])
+          geo=collections.Counter(c[:2] for c in found if not c.endswith('ZZZ'))
+          extra=sorted(c for c in found if c.endswith('ZZZ'))
+          assert dict(geo)==expected, (len(found),dict(geo),extra)
+          assert set(extra)<=set(c+'ZZZ' for c in expected)
+          assert sum(geo.values())==1165
+          with (p/'nuts2024_reference.csv').open('w',encoding='utf-8',newline='') as f:
+              w=csv.writer(f);w.writerow(['NUTS_ID','LEVL_CODE','CATEGORY']);w.writerows((c,3,'EXTRA_REGIO' if c.endswith('ZZZ') else 'TERRITORIAL') for c in sorted(found))
+          (p/'cell_provenance.json').write_text(json.dumps(found,ensure_ascii=False,indent=2))
+          report={'source_url':'https://stat.gov.pl/download/gfx/portalinformacyjny/en/defaultstronaopisowa/3725/1/1/nuts_ue_2024.xls','source_sha256':hashlib.sha256(src.read_bytes()).hexdigest(),'source_bytes':src.stat().st_size,'csv_sha256':hashlib.sha256((p/'nuts2024_reference.csv').read_bytes()).hexdigest(),'territorial':sum(geo.values()),'extra_regio':len(extra),'countries':dict(sorted(geo.items())),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+          (p/'reference_report.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report)); print('NUTS_CODES='+' '.join(sorted(found)))
+          PY
+      - name: Transfer statistical code reference
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nuts2024-statistics-poland-reference
+          path: reference/
+          retention-days: 1
+          if-no-files-found: error
