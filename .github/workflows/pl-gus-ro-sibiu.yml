@@ -15,15 +15,15 @@ jobs:
           python3 - <<'PY'
           import urllib.request,urllib.parse,pathlib,hashlib,zipfile,io,json,concurrent.futures,datetime
           out=pathlib.Path('references');out.mkdir()
-          sources=[('gus_2024.xlsx','https://stat.gov.pl/download/gfx/portalinformacyjny/en/defaultaktualnosci/3286/4/18/1/area_and_population_in_the_territorial_profile_in_2024_tables.xlsx',{'stat.gov.pl','www.stat.gov.pl'}),('sibiu_177.pdf','https://sb.prefectura.mai.gov.ro/wp-content/uploads/sites/28/2024/05/OP-177.pdf',{'sb.prefectura.mai.gov.ro'})]
+          sources=[('gus_2023.zip','https://stat.gov.pl/download/gfx/portalinformacyjny/en/defaultaktualnosci/3286/3/35/1/population._size_and_structure_31.12.2023.zip',{'stat.gov.pl','www.stat.gov.pl'})]
           def fetch(x):
               name,url,hosts=x
               try:
                   with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 statistical reference'}),timeout=40) as r:
                       final=r.geturl();assert r.status==200 and urllib.parse.urlsplit(final).scheme=='https' and urllib.parse.urlsplit(final).hostname in hosts
                       b=r.read(15*1024*1024+1);assert 0<len(b)<=15*1024*1024
-                  if name.endswith('.xlsx'):
-                      with zipfile.ZipFile(io.BytesIO(b)) as z:assert len(set(z.namelist()))==len(z.namelist()) and sum(i.file_size for i in z.infolist())<=100*1024*1024 and z.testzip() is None and 'xl/workbook.xml' in z.namelist()
+                  if name.endswith(('.xlsx','.zip')):
+                      with zipfile.ZipFile(io.BytesIO(b)) as z:assert len(set(z.namelist()))==len(z.namelist()) and sum(i.file_size for i in z.infolist())<=100*1024*1024 and z.testzip() is None 
                   else:assert b.startswith(b'%PDF')
                   (out/name).write_bytes(b)
                   return {'name':name,'url':url,'final_url':final,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()}
@@ -35,7 +35,7 @@ jobs:
       - name: Transfer evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pl-gus-ro-sibiu
+          name: pl-gus-2023-original
           path: references/
           retention-days: 1
           if-no-files-found: error
