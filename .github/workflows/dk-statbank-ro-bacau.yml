@@ -30,14 +30,18 @@ jobs:
               for x in m['variables']:
                   c=x['id'];vals=x['values']
                   if c.upper()=='OMRÅDE':pick=[a['id'] for a in vals if re.fullmatch(r'[0-9]{3}',a['id']) and int(a['id'])>=100];pick+=['000'] if any(a['id']=='000' for a in vals) else []
-                  elif c.upper()=='TID':pick=['2024Q1']
-                  else:pick=[a['id'] for a in vals if a['text'].lower() in ('total','all','both sexes','all ages','total marital status') or a['id']=='TOT'];assert len(pick)==1,(c,vals[:5])
+                  elif c.upper()=='TID':pick=['2024K1']
+                  elif c.upper()=='ALDER':pick=['IALT']
+                  elif c.upper()=='KØN':pick=['TOT','1','2']
+                  elif c.upper()=='CIVILSTAND':pick=['TOT']
+                  else:raise ValueError(c)
+                  assert all(a in [b['id'] for b in vals] for a in pick)
                   v.append({'code':c,'values':pick})
               get('folk1a_2024q1.csv','https://api.statbank.dk/v1/data',h,{'table':'FOLK1A','format':'CSV','lang':'en','valuePresentation':'Code','variables':v})
           def ro():
               get('bacau_order129.pdf','https://onesti.ro/primarie_onesti/sites/default/files/inline-files/Ordin%20nr.129.PDF',{'onesti.ro','www.onesti.ro'})
           with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-              for f in [ex.submit(dk),ex.submit(ro)]:
+              for f in [ex.submit(dk)]:
                   try:f.result()
                   except Exception as e:report.append({'error':repr(e)})
           (p/'capture_report.json').write_text(json.dumps(report,indent=2));print(json.dumps(report));assert (p/'folk1a_2024q1.csv').exists()
