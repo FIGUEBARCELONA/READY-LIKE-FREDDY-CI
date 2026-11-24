@@ -1,0 +1,28 @@
+name: ISTAT provisional archive availability
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/istat-archive-check.yml']
+permissions:
+  contents: read
+jobs:
+  availability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Query public web archive indexes
+        run: |
+          python3 - <<'PY'
+          import urllib.request, urllib.parse, json
+          source='https://demo.istat.it/data/d7b/D7B2023.csv.zip'
+          queries=[
+            'https://archive.org/wayback/available?'+urllib.parse.urlencode({'url':source,'timestamp':'20240601'}),
+            'https://web.archive.org/cdx/search/cdx?'+urllib.parse.urlencode({'url':source,'from':'2024','to':'2024','output':'json','filter':'statuscode:200'})
+          ]
+          for url in queries:
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 archival availability check'}),timeout=25) as r:
+                      b=r.read(512*1024+1);assert len(b)<=512*1024
+                      data=json.loads(b);print(json.dumps({'request':url,'status':r.status,'response':data},ensure_ascii=False))
+              except Exception as exc: print(json.dumps({'request':url,'error':repr(exc)}))
+          PY
