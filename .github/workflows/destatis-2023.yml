@@ -1,0 +1,42 @@
+name: Destatis 2023 primary municipal register
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/destatis-2023.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download primary statistical reference
+        run: |
+          python3 - <<'PY'
+          import urllib.request, urllib.parse, pathlib, hashlib, zipfile, json, datetime
+          out=pathlib.Path('references');out.mkdir()
+          base='https://www.destatis.de/DE/Themen/Laender-Regionen/Regionales/Gemeindeverzeichnis/Administrativ/Archiv/'
+          sources={'gemeinden2023.xlsx':base+'GVAuszugJ/31122023_Auszug_GV.xlsx?__blob=publicationFile&v=2','gv100ad2023.zip':base+'GV100ADJ/GV100AD31122023.zip?__blob=publicationFile&v=2'}
+          report=[]
+          for name,url in sources.items():
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 RLF statistical reference'}),timeout=40) as r:
+                      final=r.geturl();assert r.status==200 and urllib.parse.urlsplit(final).scheme=='https' and urllib.parse.urlsplit(final).hostname in {'www.destatis.de','destatis.de'}
+                      b=r.read(15*1024*1024+1);assert 0<len(b)<=15*1024*1024 and b.startswith(b'PK')
+                  p=out/name;p.write_bytes(b)
+                  with zipfile.ZipFile(p) as z:
+                      assert len(set(z.namelist()))==len(z.namelist()) and sum(i.file_size for i in z.infolist())<=100*1024*1024 and z.testzip() is None
+                      names=z.namelist()
+                      if name.endswith('.xlsx'): assert 'xl/workbook.xml' in names
+                  row={'filename':name,'url':url,'final_url':final,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'entries':names};report.append(row);print(json.dumps(row))
+              except Exception as e: report.append({'filename':name,'url':url,'error':repr(e)});print('HOLD',name,repr(e))
+          (out/'capture_report.json').write_text(json.dumps(report,indent=2)+'\n')
+          assert any('sha256' in x for x in report)
+          PY
+      - name: Transfer reference files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: destatis-2023-reference
+          path: references/
+          retention-days: 1
+          if-no-files-found: error
