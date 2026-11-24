@@ -1,4 +1,4 @@
-name: Belgium historical Statbel and Cyprus final census
+name: CYSTAT final census retrieval
 on:
   pull_request:
     branches: [main]
@@ -8,73 +8,33 @@ permissions:
 jobs:
   capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     steps:
-      - name: Capture statistical references
+      - name: Inspect official PxWeb table and API root
         run: |
           python3 - <<'PY'
-          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime,concurrent.futures,zipfile,io,re
-          from html.parser import HTMLParser
+          import urllib.request,urllib.parse,pathlib,hashlib,json,concurrent.futures
           p=pathlib.Path('references');p.mkdir()
-          report=[]
-          def fetch(url,hosts,limit=20*1024*1024,body=None):
-              with urllib.request.urlopen(urllib.request.Request(url,data=body,headers={'User-Agent':'Mozilla/5.0 RLF statistical reference','Content-Type':'application/json'}),timeout=35) as r:
-                  f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).scheme=='https' and urllib.parse.urlsplit(f).hostname in hosts
-                  b=r.read(limit+1);assert 0<len(b)<=limit
-              return b,f
-          def save(name,u,b,f):
-              (p/name).write_bytes(b)
-              return {'name':name,'url':u,'final_url':f,'sha256':hashlib.sha256(b).hexdigest(),'bytes':len(b),'utc':datetime.datetime.now(datetime.timezone.utc).isoformat()}
-          def belgium():
-              hosts={'statbel.fgov.be','www.statbel.fgov.be','bestat.statbel.fgov.be'}
-              u='https://statbel.fgov.be/en/themes/population/structure-population'
-              b,f=fetch(u,hosts,4*1024*1024);rows=[save('statbel_page.html',u,b,f)]
-              class Links(HTMLParser):
-                  def __init__(self):super().__init__();self.a=None;self.links=[]
-                  def handle_starttag(self,t,a):
-                      if t=='a':self.a=[dict(a).get('href',''),'']
-                  def handle_data(self,d):
-                      if self.a:self.a[1]+=d
-                  def handle_endtag(self,t):
-                      if t=='a' and self.a:self.links.append(self.a);self.a=None
-              l=Links();l.feed(b.decode('utf-8',errors='replace'))
-              links=[(urllib.parse.urljoin(f,h),t) for h,t in l.links if 'population per municipality on 1 january' in t.lower() or 'population par commune au 1 janvier' in t.lower()]
-              print('STATBEL_LINKS',links)
-              for u,t in links[:2]:
-                  try:
-                      b,f=fetch(u,hosts)
-                      with zipfile.ZipFile(io.BytesIO(b)) as z:assert z.testzip() is None and 'xl/workbook.xml' in z.namelist()
-                      rows.append(save('statbel_municipal.xlsx',u,b,f));return rows
-                  except Exception as e:print('HOLD',repr(e))
-              return rows
-          def cyprus():
-              host='cystatdb.cystat.gov.cy'
-              path='8.CYSTAT-DB__Population__Census of Population and Housing 2021__Population__Population - Place of Residence'
-              roots=['https://'+host+'/pxweb/api/v1/en/8.CYSTAT-DB/'+urllib.parse.quote(path,safe='')+'/1891114E.px','https://'+host+'/pxweb/api/v1/en/'+urllib.parse.quote(path,safe='')+'/1891114E.px','https://'+host+'/pxweb/api/v1/en/8.CYSTAT-DB']
-              rows=[]
-              for u in roots:
-                  try:
-                      b,f=fetch(u,{host},4*1024*1024);d=json.loads(b)
-                      rows.append(save('cy_metadata_'+str(len(rows))+'.json',u,b,f))
-                      print('CY_METADATA',str(d)[:3500])
-                      if isinstance(d,dict) and 'variables' in d:break
-                  except Exception as e:print('CY_HOLD',u,repr(e))
-              return rows
-          def arad():
-              u='https://www.primariaarad.ro/dm_arad/portal.nsf/9D3EC8BEBAA58A89C2258AFD00631340/%24FILE/Ordin%20Prefect%20nr%20241%20stabilire%20%20numar-consilieri%20locali%20judeteni.pdf?Open='
-              b,f=fetch(u,{'www.primariaarad.ro','primariaarad.ro'});assert b.startswith(b'%PDF')
-              return [save('arad_241.pdf',u,b,f)]
-          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-              for fn,f in [(fn,ex.submit(fn)) for fn in (belgium,cyprus,arad)]:
-                  try:report.extend(f.result())
-                  except Exception as e:report.append({'source':fn.__name__,'error':repr(e)})
-          (p/'capture_report.json').write_text(json.dumps(report,indent=2)+'\n');print(report)
-          assert any('sha256' in r for r in report)
+          base='https://cystatdb.cystat.gov.cy'
+          path='8.CYSTAT-DB/8.CYSTAT-DB__Population__Census of Population and Housing 2021__Population__Population - Place of Residence/1891114E.px/'
+          urls=[('table.html',base+'/pxweb/en/'+urllib.parse.quote(path,safe='/')+'table/tableViewLayout2/'),('selection.html',base+'/pxweb/en/'+urllib.parse.quote(path,safe='/')),('api_root.json',base+'/pxweb/api/v1/en/'),('api_root_alt.json',base+'/api/v1/en/'),('api_table.json',base+'/pxweb/api/v1/en/'+urllib.parse.quote(path.rstrip('/'),safe='/'))]
+          def get(x):
+              name,u=x
+              try:
+                  with urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0','Accept':'*/*'}),timeout=20) as r:
+                      f=r.geturl();assert r.status==200 and urllib.parse.urlsplit(f).hostname=='cystatdb.cystat.gov.cy' and urllib.parse.urlsplit(f).scheme=='https'
+                      b=r.read(20*1024*1024+1);assert 0<len(b)<=20*1024*1024
+                  if name.endswith('.json'):print(name,str(json.loads(b))[:2000])
+                  (p/name).write_bytes(b)
+                  return {'name':name,'url':u,'final_url':f,'bytes':len(b),'sha256':hashlib.sha256(b).hexdigest()}
+              except Exception as e:return {'name':name,'url':u,'error':repr(e)}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=5) as e:report=list(e.map(get,urls))
+          print(report);(p/'capture_report.json').write_text(json.dumps(report,indent=2))
           PY
-      - name: Transfer source evidence
+      - name: Transfer retrieved evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: be-cy-ro-reference
+          name: cy-final-retry
           path: references/
           retention-days: 1
           if-no-files-found: error
