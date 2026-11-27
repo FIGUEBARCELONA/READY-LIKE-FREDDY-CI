@@ -1,0 +1,47 @@
+name: KB68 encrypted photograph custody
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/kb68-photo-custody.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime,subprocess
+          class Guard(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,req,fp,code,msg,headers,newurl):
+                  if urllib.parse.urlsplit(newurl).scheme!='https' or urllib.parse.urlsplit(newurl).hostname!='www.fredperry.com':
+                      raise ValueError('REDIRECT_OUT_OF_SCOPE')
+                  return super().redirect_request(req,fp,code,msg,headers,newurl)
+          opener=urllib.request.build_opener(Guard())
+          p=pathlib.Path('custody');p.mkdir()
+          cert=pathlib.Path('recipient.pem');cert.write_text("-----BEGIN CERTIFICATE-----\nMIIEEzCCAnugAwIBAgIUbPEYzWdeHmVp5uHeWLnTyg+XTBwwDQYJKoZIhvcNAQEL\nBQAwGTEXMBUGA1UEAwwOUkxGLUN1c3RvZHktNjgwHhcNMjYxMTI3MTE0NTQzWhcN\nMjYxMjI3MTE0NTQzWjAZMRcwFQYDVQQDDA5STEYtQ3VzdG9keS02ODCCAaIwDQYJ\nKoZIhvcNAQEBBQADggGPADCCAYoCggGBAMk+uzQgkRkFHyZMjME0j3WeBjwplA8k\nEwUnVtlsDyrJZb+DL7qgu0me01yg1xhu8mEaW5jKKlZEUhUY3sV6zB4xxG8KQChI\nDMSMRNcCU5F9O9j2jlG6W2OPlK3DVDoeMrGUr5ka87KXXwzLK9XSPxu4uv0hgzvj\nwV/aj40/3Bzg/0iqoVbmU37MNqtvrQbzgBkQgSYCZZ6FoDBwRc4ETOjPQS6xo6kT\ng0/6tM4cmNCR8TqaHvxz7Q+U8vzqglc9cFcaLnl4Vr7eUaL83hPZdJZm8lBTvcyX\n7GDXicQBpSGRQj02C3DaVi8MEaSaHJFZGxZ1Pc1C7T5MSzlTVvVeDOzhMYG4jkso\nqQ/eUQWNnW2rx6+0QOp8h8wC7XtO2ohjd9IYdfT6xILpps1SbnhsEKW0gRmpNAXB\nqMcNaHjE+5oZtoj4uMJKVM4xrpUbbNAYXTxLQmsX3m49ND4PtETPPV001AHf3VPy\n1fd66xvFeWfiOLWlwYreOxhknuv161JPgQIDAQABo1MwUTAdBgNVHQ4EFgQU4uSd\nK1i28opZmadJM3KKOORRkecwHwYDVR0jBBgwFoAU4uSdK1i28opZmadJM3KKOORR\nkecwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAYEAFoDMQaSj7tRT\nkKcnDK+k1+KtlD3PhZ18GlfszvdZ+rCnjrX+udVQg9ssJhMJiZLM2ZxB4mR6tROo\nLts1pHgTTtaGCGXiMP/keKwyNdbI0bDI88zB4DoX6o0kMJeQSjqj6KbIqYbIc3eS\nKQ6UlDbZnQL3jXKhC5v1uDb/3a3tEA7MO6mpgqDtv8/JgzmY6vqzCxz9oO4Psu8N\nd+eBYDYB6YHb/7zVwmU8CwohuyKi/h+jz1hTk/VuFDc7HM3UB8jmVGfujSYwVmGK\n1eBLZmWrxMxZWX/aGgepQtWY6heAQHhAJQi+ApDjxo3xJpEx79za9SbTITIyFPku\n0+jSswHbcJFdZ/sgltb6myrRHnLE91FTutJcg2m6QLYYlGSOQdlLL2pr64FwXuJj\nIWM1AdXPifB+9CzHYVsv1rBHv2GlCv6SZhFreX1c+d1NuOq9Ma1wqXCPK586mqbb\nEJxgg674LHZBEpDoIMbc0HE9cc4auTACxUaHhW9x7zTITUiA1Jvd\n-----END CERTIFICATE-----\n")
+          urls={'J4620-198-swatch':'https://www.fredperry.com/media/catalog/product/cache/2be8ac8be152cd522fea5e1c9c186492/J/4/J4620_198_SWATCH.JPG','M12-16C-front':'https://www.fredperry.com/media/catalog/product/cache/70b10ed39d2c880956594586a54aca34/M/1/M12_16C_V2_Q226_MOD1_FRONT.JPG'}
+          report=[]
+          for name,url in urls.items():
+              row={'name':name,'url':url,'at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+              try:
+                  with opener.open(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 documentary custody'}),timeout=20) as r:
+                      b=r.read(16*1024*1024+1)
+                      if r.status!=200 or not 0<len(b)<=16*1024*1024 or not b.startswith(bytes.fromhex('ffd8ff')):raise ValueError('INVALID_JPEG_RESPONSE')
+                      row.update(final_url=r.geturl(),http_status=r.status,mime=r.headers.get_content_type(),bytes=len(b),sha256=hashlib.sha256(b).hexdigest())
+                  f=p/(name+'.cms')
+                  subprocess.run(['openssl','cms','-encrypt','-aes-256-gcm','-binary','-outform','DER','-out',str(f),str(cert)],input=b,check=True)
+                  row.update(status='ENCRYPTED_CAPTURE',encrypted_sha256=hashlib.sha256(f.read_bytes()).hexdigest())
+              except Exception as e:
+                  row.update(status='HOLD',error=type(e).__name__+': '+str(e))
+              report.append(row)
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: kb68-encrypted-custody
+          path: custody/
+          retention-days: 1
+          if-no-files-found: error
