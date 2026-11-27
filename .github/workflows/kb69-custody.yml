@@ -1,0 +1,51 @@
+name: KB69 encrypted batch custody
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/kb69-custody.yml']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import urllib.request,urllib.parse,pathlib,hashlib,json,datetime,subprocess,concurrent.futures
+          items=json.loads("[[\"museum-m3\",\"https://designmuseum.org/image/960c8909-c0ed-46b0-a95c-038f5bcc2fed?height=606&width=980\",\"image\"],[\"museum-brochures\",\"https://designmuseum.org/image/3764c8c7-185e-4b00-96b9-276bd91f0342?height=606&width=980\",\"image\"],[\"leicester-polo\",\"https://www.leicestermuseums.org/media/ofcnuwm3/fred-perry-white-bg.png\",\"image\"],[\"garment-tag\",\"https://www.fredperry.com/static/version0.0.0.917/frontend/Magento/base/default/Perry_Brandbook/images/the-shirt/garment-tag-1.jpg\",\"image\"],[\"m1211-tag\",\"https://www.fredperry.com/static/version0.0.0.917/frontend/Magento/base/default/Perry_Brandbook/images/the-shirt/style-tag-3.png\",\"image\"],[\"sm8180-flat\",\"https://www.fredperry.com/media/catalog/product/cache/58b578f6fe1e04696785977d8678c4fc/S/M/SM8180-R_V28_V2_Q125_FLATFRONT.JPG\",\"image\"],[\"m3600-swatch\",\"https://www.fredperry.com/media/catalog/product/cache/18ce19d02204c21891a018e940810c52/M/3/M3600_09B_SWATCH.JPG\",\"image\"],[\"milled-bomber\",\"https://images.milledcdn.com/2018-02-20/yU30VH84F-rOjgQ-/5tDV-skHen12.png\",\"image\"],[\"milled-sky\",\"https://images.milledcdn.com/2018-02-20/yU30VH84F-rOjgQ-/Bo_Sc7qrLBBS.png\",\"image\"],[\"milled-navy\",\"https://images.milledcdn.com/2018-02-20/yU30VH84F-rOjgQ-/mhSdDrqFQrmp.png\",\"image\"],[\"goat-parka-01\",\"https://image.goat.com/transform/v1/attachments/product_template_additional_pictures/images/094/150/287/original/1301333_01.jpg.jpeg?action=crop&width=750\",\"image\"],[\"goat-parka-02\",\"https://image.goat.com/transform/v1/attachments/product_template_additional_pictures/images/094/150/289/original/1301333_02.jpg.jpeg?action=crop&width=750\",\"image\"],[\"reissues-2018\",\"https://cdn.uc.assets.prezly.com/431553b9-39eb-4e21-a82f-a406582aed17/-/inline/no/\",\"pdf\"],[\"laurel-2018\",\"https://cdn.uc.assets.prezly.com/a767ce11-a74e-4c54-9a24-0649ed7236cd/-/inline/no/\",\"pdf\"],[\"sports-2018\",\"https://cdn.uc.assets.prezly.com/5a07b388-7dd0-4ce7-8486-70a9afc22d2d/-/inline/no/\",\"pdf\"]]")
+          hosts={urllib.parse.urlsplit(x[1]).hostname for x in items}|{'www.designmuseum.org','fredperry.com','leicestermuseums.org'}
+          class Guard(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,req,fp,code,msg,headers,newurl):
+                  u=urllib.parse.urlsplit(newurl)
+                  if u.scheme!='https' or u.hostname not in hosts or u.username or u.password: raise ValueError('REDIRECT_OUT_OF_SCOPE')
+                  return super().redirect_request(req,fp,code,msg,headers,newurl)
+          p=pathlib.Path('custody');p.mkdir()
+          cert=pathlib.Path('recipient.pem');cert.write_text("-----BEGIN CERTIFICATE-----\nMIIEFzCCAn+gAwIBAgIUWuK82PPU5Bd2+ZHD/xuWJ+1ozmcwDQYJKoZIhvcNAQEL\nBQAwGzEZMBcGA1UEAwwQUkxGLUtCNjktY3VzdG9keTAeFw0yNjExMjcxNzU4MjBa\nFw0yNjEyMDQxNzU4MjBaMBsxGTAXBgNVBAMMEFJMRi1LQjY5LWN1c3RvZHkwggGi\nMA0GCSqGSIb3DQEBAQUAA4IBjwAwggGKAoIBgQDMmUmx55Nyr7JyVDix4Z0AiElw\n+JBNEWZMq0gfLR7VW5JKwh4EIQT/Z2cUDwyrCfo1ZluM968Z1SXcLVOP6s609ID7\nKOt7xXD/x6kvYqLkqlV4AKo8eWKNj5IRWofi2GsMwsvZgeuYzbGcrC6uvFdmtLOE\n6WQl7Ukqiy4RrDlhz6ZrEeR8TlssyH/y4Exn8FWIr8u4PmajX0HL5dL046vsAJdH\nGl0BSfS83fvWpXTSXHYgtDe3Xv2w4h5l+0U815yzylBASCWE0Sw+W2MuOWsjyP2k\nMMDNkWcm4GWwBZs37RbupizvFEE88XkPE6xvxp8Y4WTvkLajCMOHAIR1pKMd3YMR\n36LS0j7PosMXEoCX4YovScpeUYdu5oyQ229FrRB7LPHQ7sQR3ytmaSprp8idZETE\nKsw9hiYdCQkAcDnQJXSbO6/NoMsayH5JXTe20VeYr/XtswBIH2AiFHL8nm5W40jA\nDrj6ZtTwU/SGm7XzWHKkF+2n1hsc9wjQ5x0PRwsCAwEAAaNTMFEwHQYDVR0OBBYE\nFGMb2OPPilIkx+gv8XCDXCsIzpagMB8GA1UdIwQYMBaAFGMb2OPPilIkx+gv8XCD\nXCsIzpagMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggGBAKr4RVQF\npaW4PPKqEibeUI18fqjBvMQi4aOSYxZu0PhypLw8qMwsJKnV6BObTUVreSv0qqC/\nmHCDgWsQPZoLB+zuVb3xuw+xxPvdCfsc6rr2uJLFQS6jpm8yWufP2ghbhyAVey6G\ncNlolQ269fEMHslK/kWGTb/yBjskjWEw7oXEbSGeBJhGb+P3Ec2g3CgEyL7D9fsh\nPY4/uaf29E0u2cw6qGf+k11jKFt5+zixE7StmLGWD+2Ag5CBqN5KkYCtjBULsD7q\nRHbbid5vXix66aOlHORzNxJobOi390QKHch8L8h9V92xSXTVKwMAO+GIL5Iitx6q\ngeDfTVKJO7Rr02S0e+lcHpVGq8BYJwXb67gq5/AiXhGebe9q5SVUQqluxf34xBLJ\nJkD5VSNXbqDsOuoQzPI8ciMskpZUElVAGOD6K5QMYqqUoZWirLZPE9/MyuT71eYA\n7eLuj1TuT/Y7gvWD1XKjP2fomnVaC3D8VKaqzZzS2dDtKfHCqSdfwuQRzw==\n-----END CERTIFICATE-----\n")
+          def get(item):
+              name,url,kind=item
+              row={'name':name,'url':url,'kind':kind,'at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+              try:
+                  limit=64*1024*1024 if kind=='pdf' else 16*1024*1024
+                  with urllib.request.build_opener(Guard()).open(urllib.request.Request(url,headers={'User-Agent':'RLF-CI/1.0 documentary custody'}),timeout=30) as r:
+                      b=r.read(limit+1)
+                      row.update(final_url=r.geturl(),http_status=r.status,mime=r.headers.get_content_type(),bytes=len(b))
+                      if r.status!=200 or not 0<len(b)<=limit:raise ValueError('INVALID_RESPONSE_SIZE')
+                      fmt='pdf' if b.startswith(b'%PDF-') else 'jpg' if b.startswith(bytes.fromhex('ffd8ff')) else 'png' if b.startswith(bytes.fromhex('89504e470d0a1a0a')) else 'webp' if b[:4]==b'RIFF' and b[8:12]==b'WEBP' else None
+                      if fmt is None or (kind=='pdf')!=(fmt=='pdf'):raise ValueError('INVALID_FILE_SIGNATURE')
+                      row.update(format=fmt,sha256=hashlib.sha256(b).hexdigest())
+                  f=p/(name+'.cms')
+                  subprocess.run(['openssl','cms','-encrypt','-aes-256-gcm','-binary','-outform','DER','-out',str(f),str(cert)],input=b,check=True)
+                  row.update(status='ENCRYPTED_CAPTURE',encrypted_sha256=hashlib.sha256(f.read_bytes()).hexdigest())
+              except Exception as e:row.update(status='HOLD',error=type(e).__name__+': '+str(e))
+              return row
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:report=list(ex.map(get,items))
+          (p/'capture_report.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: kb69-encrypted-custody
+          path: custody/
+          retention-days: 1
+          if-no-files-found: error
